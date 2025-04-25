@@ -1,0 +1,2 @@
+mir_robot/mir_robot
+/home/joel/Desktop/mir_ws/devel/.private/mir_robot/cmake.lock /home/joel/Desktop/mir_ws/devel/./cmake.lock

@@ -1,0 +1,8 @@
+prefix=/home/joel/Desktop/mir_ws/devel_isolated/mir_gazebo
+
+Name: mir_gazebo
+Description: Description of mir_gazebo
+Version: 1.1.7
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 

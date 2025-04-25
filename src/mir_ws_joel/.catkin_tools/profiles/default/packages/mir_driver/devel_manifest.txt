@@ -1,0 +1,11 @@
+mir_robot/mir_driver
+/home/joel/Desktop/mir_ws/devel/.private/mir_driver/cmake.lock /home/joel/Desktop/mir_ws/devel/./cmake.lock
+/home/joel/Desktop/mir_ws/devel/.private/mir_driver/share/mir_driver/cmake/mir_driverConfig.cmake /home/joel/Desktop/mir_ws/devel/share/mir_driver/cmake/mir_driverConfig.cmake
+/home/joel/Desktop/mir_ws/devel/.private/mir_driver/share/mir_driver/cmake/mir_driverConfig-version.cmake /home/joel/Desktop/mir_ws/devel/share/mir_driver/cmake/mir_driverConfig-version.cmake
+/home/joel/Desktop/mir_ws/devel/.private/mir_driver/lib/mir_driver/cmake.lock /home/joel/Desktop/mir_ws/devel/lib/mir_driver/cmake.lock
+/home/joel/Desktop/mir_ws/devel/.private/mir_driver/lib/mir_driver/fake_mir_joint_publisher.py /home/joel/Desktop/mir_ws/devel/lib/mir_driver/fake_mir_joint_publisher.py
+/home/joel/Desktop/mir_ws/devel/.private/mir_driver/lib/mir_driver/tf_remove_child_frames.py /home/joel/Desktop/mir_ws/devel/lib/mir_driver/tf_remove_child_frames.py
+/home/joel/Desktop/mir_ws/devel/.private/mir_driver/lib/mir_driver/rep117_filter.py /home/joel/Desktop/mir_ws/devel/lib/mir_driver/rep117_filter.py
+/home/joel/Desktop/mir_ws/devel/.private/mir_driver/lib/mir_driver/mir_bridge.py /home/joel/Desktop/mir_ws/devel/lib/mir_driver/mir_bridge.py
+/home/joel/Desktop/mir_ws/devel/.private/mir_driver/lib/python3/dist-packages/mir_driver/__init__.py /home/joel/Desktop/mir_ws/devel/lib/python3/dist-packages/mir_driver/__init__.py
+/home/joel/Desktop/mir_ws/devel/.private/mir_driver/lib/pkgconfig/mir_driver.pc /home/joel/Desktop/mir_ws/devel/lib/pkgconfig/mir_driver.pc

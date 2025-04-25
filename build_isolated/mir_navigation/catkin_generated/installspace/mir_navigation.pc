@@ -1,0 +1,8 @@
+prefix=/home/joel/Desktop/mir_ws/install_isolated
+
+Name: mir_navigation
+Description: Description of mir_navigation
+Version: 1.1.7
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 
