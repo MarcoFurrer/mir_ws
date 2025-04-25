@@ -1,7 +1,7 @@
 <launch>
-    <!-- Load the map - Use explicit path to the map in the 'map' directory -->
-    <arg name="map_file" default="$(find workstation_detector)/../../../map/game_s12.yaml"/>
-    <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)"/>
+    <!-- Load the map using an absolute path to ensure the correct map is loaded -->
+    <arg name="map_file" default="$(env HOME)/mir_ws/map/game_s12.yaml"/>
+    <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)" respawn="false" />
 
     <!-- Run AMCL for localization -->
     <include file="$(find mir_navigation)/launch/amcl.launch" />
