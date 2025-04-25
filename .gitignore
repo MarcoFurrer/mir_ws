@@ -33,3 +33,7 @@ Thumbs.db
 # Python cache
 __pycache__/
 EOF
+
+# map
+!game_s12.yaml
+!game_s12.pgm
