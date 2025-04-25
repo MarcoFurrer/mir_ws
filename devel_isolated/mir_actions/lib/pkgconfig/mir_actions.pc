@@ -1,8 +1,0 @@
-prefix=/home/joel/Desktop/mir_ws/devel_isolated/mir_actions
-
-Name: mir_actions
-Description: Description of mir_actions
-Version: 1.1.7
-Cflags: -I/home/joel/Desktop/mir_ws/devel_isolated/mir_actions/include
-Libs: -L${prefix}/lib 
-Requires: actionlib geometry_msgs message_runtime mir_msgs nav_msgs

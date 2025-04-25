@@ -1,8 +1,0 @@
-prefix=/home/joel/Desktop/mir_ws/devel_isolated/mir_description
-
-Name: mir_description
-Description: Description of mir_description
-Version: 1.1.7
-Cflags: 
-Libs: -L${prefix}/lib 
-Requires: 

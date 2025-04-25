@@ -1,2 +1,0 @@
-aruco:aruco_msgs:aruco_ros:mir_robot/mir_actions:mir_robot/mir_description:mir_robot/mir_driver:mir_robot/mir_dwb_critics:mir_robot/mir_gazebo:mir_robot/mir_msgs:mir_robot/mir_navigation:mir_robot/mir_robot:mir_robot/sdc21x0
--G Unix Makefiles -DCATKIN_DEVEL_PREFIX=/home/joel/Desktop/mir_ws/devel_isolated -DCMAKE_INSTALL_PREFIX=/home/joel/Desktop/mir_ws/install_isolated

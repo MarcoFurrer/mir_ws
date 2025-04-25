@@ -1,8 +1,0 @@
-prefix=/home/joel/Desktop/mir_ws/devel_isolated/aruco_ros
-
-Name: aruco_ros
-Description: Description of aruco_ros
-Version: 2.2.3
-Cflags: -I/home/joel/Desktop/mir_ws/devel_isolated/aruco_ros/include -I/home/joel/Desktop/mir_ws/src/aruco_ros/include
-Libs: -L${prefix}/lib -laruco_ros_utils
-Requires: aruco sensor_msgs tf
