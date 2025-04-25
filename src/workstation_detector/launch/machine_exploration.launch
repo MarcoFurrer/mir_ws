@@ -39,11 +39,8 @@
     <node pkg="tf" type="static_transform_publisher" name="base_to_laser" 
           args="0 0 0 0 0 0 base_link laser 100" />
     
-    <!-- Run move_base for navigation if the start_planner.launch file exists -->
-    <include file="$(find mir_navigation)/launch/start_planner.launch" if="$(eval find('mir_navigation/launch/start_planner.launch') != '')"/>
-    
-    <!-- If start_planner.launch doesn't exist, use a basic move_base setup -->
-    <node pkg="move_base" type="move_base" name="move_base" output="screen" unless="$(eval find('mir_navigation/launch/start_planner.launch') != '')">
+    <!-- Use a basic move_base setup directly instead of trying to include start_planner.launch -->
+    <node pkg="move_base" type="move_base" name="move_base" output="screen">
         <!-- Basic configuration for move_base -->
         <param name="controller_frequency" value="5.0"/>
         <param name="controller_patience" value="15.0"/>
@@ -51,6 +48,14 @@
         <param name="planner_patience" value="5.0"/>
         <param name="oscillation_timeout" value="10.0"/>
         <param name="oscillation_distance" value="0.2"/>
+        
+        <!-- Load global costmap params -->
+        <rosparam file="$(find workstation_detector)/config/global_costmap_params.yaml" command="load" />
+        <!-- Load local costmap params -->
+        <rosparam file="$(find workstation_detector)/config/local_costmap_params.yaml" command="load" />
+        <!-- Load common costmap params -->
+        <rosparam file="$(find workstation_detector)/config/costmap_common_params.yaml" command="load" ns="global_costmap" />
+        <rosparam file="$(find workstation_detector)/config/costmap_common_params.yaml" command="load" ns="local_costmap" />
     </node>
     
     <!-- Machine detection node -->
@@ -60,7 +65,7 @@
     <node name="exploration_controller" pkg="workstation_detector" type="exploration_controller.py" output="screen" />
     
     <!-- Set initial pose via ROS topic - this is a way to manually set the robot position -->
-    <node pkg="rostopic" type="rostopic" name="publish_initial_pose" args="pub -1 /initialpose geometry_msgs/PoseWithCovarianceStamped '{header: {frame_id: map}, pose: {pose: {position: {x: $(arg initial_pose_x), y: $(arg initial_pose_y)}, orientation: {z: $(eval sin(arg('initial_pose_a')/2)), w: $(eval cos(arg('initial_pose_a')/2))}}, covariance: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853891945200942]}}'" output="screen" />
+    <node pkg="rostopic" type="rostopic" name="publish_initial_pose" args="pub -1 /initialpose geometry_msgs/PoseWithCovarianceStamped '{header: {frame_id: map}, pose: {pose: {position: {x: $(arg initial_pose_x), y: $(arg initial_pose_y)}, orientation: {z: $(eval sin(arg('initial_pose_a')/2)), w: $(eval cos(arg('initial_pose_a')/2))}}, covariance: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853891945200942]}}'" output="screen" />
     
     <!-- RViz for visualization -->
     <node name="rviz" pkg="rviz" type="rviz" args="-d $(find workstation_detector)/rviz/machine_exploration.rviz" />
