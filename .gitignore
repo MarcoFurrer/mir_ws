@@ -1,0 +1,35 @@
+cat <<EOF > .gitignore
+# Build artifacts
+build/
+devel/
+install/
+log/
+logs/
+
+# ROS 2 specific (optional if using colcon)
+*.log
+*.pyc
+*.pyo
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# ROS map or bag files (optional)
+*.pgm
+*.yaml
+*.bag
+*.db3
+
+# IDE/Editor configs
+.vscode/
+.idea/
+*.code-workspace
+
+# OS / system files
+.DS_Store
+Thumbs.db
+
+# Python cache
+__pycache__/
+EOF
