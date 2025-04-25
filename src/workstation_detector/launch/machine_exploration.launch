@@ -1,0 +1,19 @@
+<launch>
+    <!-- Load the map -->
+    <node name="map_server" pkg="map_server" type="map_server" args="$(find workstation_detector)/maps/game_s12.yaml"/>
+
+    <!-- Run AMCL for localization -->
+    <include file="$(find mir_navigation)/launch/amcl.launch" />
+    
+    <!-- Run move_base for navigation -->
+    <include file="$(find mir_navigation)/launch/start_planner.launch" />
+    
+    <!-- Machine detection node -->
+    <node name="machine_detector" pkg="workstation_detector" type="workstation_detector.py" output="screen" />
+    
+    <!-- Exploration controller -->
+    <node name="exploration_controller" pkg="workstation_detector" type="exploration_controller.py" output="screen" />
+    
+    <!-- RViz for visualization -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find workstation_detector)/rviz/machine_exploration.rviz" />
+</launch>

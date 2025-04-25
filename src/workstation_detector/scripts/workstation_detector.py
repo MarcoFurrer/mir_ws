@@ -5,6 +5,7 @@ from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import PoseArray, Pose
 from visualization_msgs.msg import Marker, MarkerArray
 import tf
+import math
 
 class WorkstationDetector:
     def __init__(self):
@@ -13,6 +14,10 @@ class WorkstationDetector:
         # Store workstation locations and count
         self.workstations_detected = []
         self.workstations_count = 0
+        
+        # Define machine dimensions (in meters)
+        self.machine_length = 0.8  # 80cm
+        self.machine_width = 0.3   # 30cm
         
         # Publishers
         self.workstation_pub = rospy.Publisher('/detected_workstations', PoseArray, queue_size=10)
@@ -27,7 +32,7 @@ class WorkstationDetector:
         self.static_map_data = None
         self.costmap = None
         
-        rospy.loginfo("Enhanced workstation detector initialized")
+        rospy.loginfo("Machine detector initialized - looking for objects 80cm x 30cm")
     
     def static_map_callback(self, map_msg):
         if self.static_map is None:
@@ -104,7 +109,7 @@ class WorkstationDetector:
         
         # Simple clustering by distance
         clusters = []
-        min_distance = 0.5  # Minimum distance between clusters (meters)
+        min_distance = 0.3  # Minimum distance between clusters (meters)
         
         for i in range(len(x_points)):
             x, y = x_points[i], y_points[i]
@@ -128,33 +133,60 @@ class WorkstationDetector:
                 # Create new cluster
                 clusters.append([[x], [y]])
         
-        # Filter clusters by size - we want substantial objects
-        min_points = 5  # Minimum number of points to be considered a workstation
-        valid_clusters = [c for c in clusters if len(c[0]) >= min_points]
-        
-        # Save each cluster as a workstation
+        # For each cluster, check if it matches our machine dimensions
         self.workstations_detected = []
-        for cluster in valid_clusters:
-            # Calculate the center of the cluster
-            cx = sum(cluster[0]) / len(cluster[0])
-            cy = sum(cluster[1]) / len(cluster[1])
-            
-            # Create a pose for this workstation
-            pose = Pose()
-            pose.position.x = cx
-            pose.position.y = cy
-            pose.position.z = 0.0
-            pose.orientation.w = 1.0  # Default orientation
-            
-            self.workstations_detected.append(pose)
         
-        # Limit to 4 workstations (the largest ones)
-        if len(self.workstations_detected) > 4:
-            # TODO: Use a better metric than just taking the first 4
-            self.workstations_detected = self.workstations_detected[:4]
+        for cluster in clusters:
+            if len(cluster[0]) < 5:
+                continue  # Skip too small clusters
+                
+            # Get the extent of the cluster
+            min_x, max_x = min(cluster[0]), max(cluster[0])
+            min_y, max_y = min(cluster[1]), max(cluster[1])
+            
+            width = max_x - min_x
+            height = max_y - min_y
+            
+            # Check if dimensions approximately match our machine size (with some tolerance)
+            # Either orientation could match (length×width or width×length)
+            tolerance = 0.2  # 20% tolerance
+            
+            orientation = 0  # Default orientation
+            if ((abs(width - self.machine_length) < self.machine_length * tolerance and 
+                 abs(height - self.machine_width) < self.machine_width * tolerance) or
+                (abs(width - self.machine_width) < self.machine_width * tolerance and 
+                 abs(height - self.machine_length) < self.machine_length * tolerance)):
+                
+                # It's a match - calculate center
+                cx = sum(cluster[0]) / len(cluster[0])
+                cy = sum(cluster[1]) / len(cluster[1])
+                
+                # Determine orientation
+                if abs(width - self.machine_length) < self.machine_length * tolerance:
+                    # Machine is horizontal (length along x-axis)
+                    orientation = 0
+                else:
+                    # Machine is vertical (length along y-axis)
+                    orientation = math.pi / 2
+                
+                # Create a pose for this workstation
+                pose = Pose()
+                pose.position.x = cx
+                pose.position.y = cy
+                pose.position.z = 0.0
+                
+                # Set orientation using quaternion
+                q = tf.transformations.quaternion_from_euler(0, 0, orientation)
+                pose.orientation.x = q[0]
+                pose.orientation.y = q[1]
+                pose.orientation.z = q[2]
+                pose.orientation.w = q[3]
+                
+                self.workstations_detected.append(pose)
+                rospy.loginfo(f"Detected machine at ({cx:.2f}, {cy:.2f}) with dimensions {width:.2f}x{height:.2f}m")
         
         self.workstations_count = len(self.workstations_detected)
-        rospy.loginfo(f"Found {self.workstations_count} workstations")
+        rospy.loginfo(f"Found {self.workstations_count} machines matching target dimensions")
         
         # Publish workstations
         self.publish_workstations()
@@ -180,10 +212,10 @@ class WorkstationDetector:
             marker.action = Marker.ADD
             marker.pose = workstation
             
-            # Set size (adjust as needed for your workstations)
-            marker.scale.x = 0.5
-            marker.scale.y = 0.5
-            marker.scale.z = 0.5
+            # Set size to match our machine dimensions
+            marker.scale.x = self.machine_length
+            marker.scale.y = self.machine_width
+            marker.scale.z = 0.5  # Height
             
             # Set color (green)
             marker.color.r = 0.0
