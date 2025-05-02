@@ -16,8 +16,8 @@ class WorkstationDetector:
         self.workstations_count = 0
         
         # Define machine dimensions (in meters)
-        self.machine_length = 0.8  # 80cm
-        self.machine_width = 0.3   # 30cm
+        self.machine_length = 0.70  # 80cm
+        self.machine_width = 0.35   # 30cm
         
         # Publishers
         self.workstation_pub = rospy.Publisher('/detected_workstations', PoseArray, queue_size=10)
@@ -52,6 +52,7 @@ class WorkstationDetector:
     
     def find_workstations(self):
         if self.static_map is None or self.costmap is None:
+            rospy.logwarn("Static map or costmap not available yet")
             return
             
         # Convert costmap to numpy array
@@ -146,6 +147,8 @@ class WorkstationDetector:
             
             width = max_x - min_x
             height = max_y - min_y
+            
+            rospy.loginfo(f"Cluster dimensions: {width:.2f} x {height:.2f}m")
             
             # Check if dimensions approximately match our machine size (with some tolerance)
             # Either orientation could match (length×width or width×length)
