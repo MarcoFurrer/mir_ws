@@ -11,7 +11,8 @@ import time
 class WorkstationDetector:
     def __init__(self):
         rospy.init_node('workstation_detector')
-        self.processing_interval = 1.0 
+        self.processing_interval = 1.0
+        self.last_processed_time = 0
         
         
         
@@ -57,12 +58,6 @@ class WorkstationDetector:
             avg_dist = sum(valid_ranges) / len(valid_ranges)
             rospy.loginfo("Scan statistics: min=%.2fm, max=%.2fm, avg=%.2fm",
                          min_dist, max_dist, avg_dist)
-        
-        # Find clusters of points that could be objects
-        clusters = self.cluster_scan_points(x_points, y_points)
-        
-        # Analyze each cluster to see if it matches workstation dimensions
-        self.analyze_clusters(clusters, msg.header.frame_id)
 
 
 if __name__ == '__main__':
