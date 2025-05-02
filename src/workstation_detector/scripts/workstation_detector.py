@@ -6,7 +6,6 @@ from geometry_msgs.msg import PoseArray, Pose
 from visualization_msgs.msg import Marker, MarkerArray
 import tf
 import math
-from sklearn.cluster import DBSCAN  # For clustering points
 
 class WorkstationDetector:
     def __init__(self):
@@ -38,15 +37,27 @@ class WorkstationDetector:
         # Store detected workstations for persistence
         self.all_detections = []  # Will store all valid workstation detections
         
+        # Debug flags
+        self.debug_level = 2  # 0=minimal, 1=normal, 2=verbose
+        
         rospy.loginfo("Machine detector initialized - looking for objects 70cm x 35cm directly in costmap")
+        rospy.loginfo("Debug level set to %d (0=minimal, 1=normal, 2=verbose)", self.debug_level)
+    
+    def debug_print(self, level, message):
+        """Print debug message if debug_level >= level"""
+        if self.debug_level >= level:
+            rospy.loginfo(message)
     
     def costmap_callback(self, costmap_msg):
         self.map_updates += 1
         self.costmap = costmap_msg
         
+        self.debug_print(1, f"Received costmap update #{self.map_updates}, resolution: {costmap_msg.info.resolution}")
+        self.debug_print(2, f"Costmap dimensions: {costmap_msg.info.width}x{costmap_msg.info.height}")
+        
         # Only process every 5th update to reduce computational load
         if self.map_updates % 5 == 0:
-            rospy.loginfo("Processing costmap to find workstations")
+            self.debug_print(1, "Processing costmap to find workstations")
             self.find_workstations()
     
     def find_workstations(self):
@@ -59,12 +70,14 @@ class WorkstationDetector:
         # Consider cells with costmap value > threshold as potential obstacles
         obstacle_threshold = 65  # Adjust based on your costmap values
         
-        # Debug counts
-        costmap_occupied_count = 0
-        
         # Lists to store candidate points (occupied cells)
         candidate_x = []
         candidate_y = []
+        
+        # Count different types of cells
+        unknown_cells = 0
+        free_cells = 0
+        occupied_cells = 0
         
         # Iterate through the costmap
         for y in range(costmap_data.shape[0]):
@@ -72,9 +85,13 @@ class WorkstationDetector:
                 # Get costmap value
                 costmap_value = costmap_data[y, x]
                 
-                # If obstacle in costmap
-                if costmap_value > obstacle_threshold:
-                    costmap_occupied_count += 1
+                # Count cell types
+                if costmap_value == -1:
+                    unknown_cells += 1
+                elif costmap_value < obstacle_threshold:
+                    free_cells += 1
+                else:
+                    occupied_cells += 1
                     
                     # Convert to world coordinates
                     world_x = x * self.costmap.info.resolution + self.costmap.info.origin.position.x
@@ -83,42 +100,92 @@ class WorkstationDetector:
                     candidate_y.append(world_y)
         
         # Diagnostic info
-        rospy.loginfo(f"Found {len(candidate_x)} occupied cells in costmap")
+        self.debug_print(1, f"Costmap analysis: {occupied_cells} occupied, {free_cells} free, {unknown_cells} unknown cells")
+        self.debug_print(1, f"Found {len(candidate_x)} candidate points for clustering")
         
+        # Display min/max values in costmap for debugging threshold
+        if self.debug_level >= 2 and len(costmap_data) > 0:
+            costmap_values = costmap_data.flatten()
+            costmap_values = costmap_values[costmap_values >= 0]  # Remove unknown (-1) values
+            if len(costmap_values) > 0:
+                self.debug_print(2, f"Costmap value range: min={np.min(costmap_values)}, max={np.max(costmap_values)}, threshold={obstacle_threshold}")
+            
         # Visualize candidate points
         self.visualize_candidate_points(candidate_x, candidate_y)
         
         if len(candidate_x) < 3:
-            rospy.loginfo("Too few candidate points for clustering")
+            self.debug_print(1, "Too few candidate points for clustering")
             return
             
-        # Use DBSCAN clustering algorithm to group nearby points
-        points = np.column_stack([candidate_x, candidate_y])
+        # Use a simple clustering algorithm (no sklearn dependency)
+        self.debug_print(1, "Starting custom clustering algorithm")
+        clusters = self.simple_clustering(candidate_x, candidate_y)
+        self.debug_print(1, f"Found {len(clusters)} clusters of points")
         
-        # DBSCAN parameters:
-        # eps = maximum distance between points to be considered in same cluster (0.15m)
-        # min_samples = minimum number of points to form a cluster (3)
-        db = DBSCAN(eps=0.15, min_samples=3).fit(points)
-        
-        labels = db.labels_
-        unique_labels = set(labels)
-        
-        # Remove noise points (label = -1)
-        if -1 in unique_labels:
-            unique_labels.remove(-1)
-            
-        rospy.loginfo(f"DBSCAN found {len(unique_labels)} clusters")
-        
-        # Process clusters
-        clusters = []
-        for label in unique_labels:
-            cluster_points = points[labels == label]
-            cluster_x = cluster_points[:, 0].tolist()
-            cluster_y = cluster_points[:, 1].tolist()
-            clusters.append([cluster_x, cluster_y])
-            
-        # Detect line-like clusters and estimate full object dimensions
+        # Detect objects in clusters
         self.analyze_clusters(clusters)
+    
+    def simple_clustering(self, x_points, y_points, max_distance=0.15):
+        """Simple clustering algorithm without using sklearn"""
+        if len(x_points) == 0:
+            return []
+            
+        # Convert to list of points
+        points = list(zip(x_points, y_points))
+        clusters = []
+        
+        # Sort points by x coordinate for faster neighbor finding
+        points.sort(key=lambda p: p[0])
+        
+        # Keep track of assigned points
+        assigned = set()
+        
+        self.debug_print(2, f"Starting clustering with {len(points)} points, max_distance={max_distance}")
+        
+        # Process each point
+        for i, point in enumerate(points):
+            if i in assigned:
+                continue
+                
+            # Start a new cluster
+            cluster_points = [point]
+            assigned.add(i)
+            
+            # Find all points within max_distance of any point in the cluster
+            queue = [i]
+            while queue:
+                idx = queue.pop(0)
+                px, py = points[idx]
+                
+                # Check nearby points (optimization: only check nearby points in sorted list)
+                # Find approximate bounds to search
+                min_x_idx = i
+                while min_x_idx > 0 and px - points[min_x_idx-1][0] <= max_distance:
+                    min_x_idx -= 1
+                    
+                max_x_idx = i
+                while max_x_idx < len(points) - 1 and points[max_x_idx+1][0] - px <= max_distance:
+                    max_x_idx += 1
+                    
+                # Check points in this range
+                for j in range(min_x_idx, max_x_idx + 1):
+                    if j not in assigned:
+                        qx, qy = points[j]
+                        # Calculate actual distance
+                        if np.sqrt((qx - px)**2 + (qy - py)**2) <= max_distance:
+                            cluster_points.append(points[j])
+                            assigned.add(j)
+                            queue.append(j)
+            
+            # Only consider clusters with at least 3 points
+            if len(cluster_points) >= 3:
+                # Extract x and y coordinates
+                cluster_x = [p[0] for p in cluster_points]
+                cluster_y = [p[1] for p in cluster_points]
+                clusters.append([cluster_x, cluster_y])
+                self.debug_print(2, f"Created cluster #{len(clusters)} with {len(cluster_points)} points")
+                
+        return clusters
     
     def visualize_candidate_points(self, x_points, y_points):
         """Visualize candidate points as red spheres"""
@@ -156,80 +223,99 @@ class WorkstationDetector:
         if len(points_x) < 3:
             return False, 0, 0
             
-        # Calculate principal components
-        points = np.column_stack([points_x, points_y])
-        mean = np.mean(points, axis=0)
-        points_centered = points - mean
-        
-        # Calculate covariance matrix
-        cov = np.cov(points_centered.T)
-        
-        # Calculate eigenvalues and eigenvectors
-        eigenvalues, eigenvectors = np.linalg.eig(cov)
-        
-        # Sort by eigenvalue
-        idx = eigenvalues.argsort()[::-1]
-        eigenvalues = eigenvalues[idx]
-        eigenvectors = eigenvectors[:, idx]
-        
-        # If first eigenvalue is much larger than second, points are line-like
-        if len(eigenvalues) < 2 or eigenvalues[0] < 0.001:
-            return False, 0, 0
+        try:
+            # Calculate principal components
+            points = np.column_stack([points_x, points_y])
+            mean = np.mean(points, axis=0)
+            points_centered = points - mean
             
-        ratio = eigenvalues[0] / (eigenvalues[1] + 0.00001)  # Avoid division by zero
-        is_line = ratio > threshold
-        
-        # Principal direction (orientation of the line)
-        principal_direction = eigenvectors[:, 0]
-        angle = math.atan2(principal_direction[1], principal_direction[0])
-        
-        # Length of the line approximated by range of points along principal direction
-        projected = np.dot(points_centered, principal_direction)
-        line_length = max(projected) - min(projected)
-        
-        return is_line, angle, line_length
+            # Calculate covariance matrix
+            cov = np.cov(points_centered.T)
+            
+            # Calculate eigenvalues and eigenvectors
+            eigenvalues, eigenvectors = np.linalg.eig(cov)
+            
+            # Sort by eigenvalue
+            idx = eigenvalues.argsort()[::-1]
+            eigenvalues = eigenvalues[idx]
+            eigenvectors = eigenvectors[:, idx]
+            
+            # If first eigenvalue is much larger than second, points are line-like
+            if len(eigenvalues) < 2 or eigenvalues[0] < 0.001:
+                return False, 0, 0
+                
+            ratio = eigenvalues[0] / (eigenvalues[1] + 0.00001)  # Avoid division by zero
+            is_line = ratio > threshold
+            
+            # Principal direction (orientation of the line)
+            principal_direction = eigenvectors[:, 0]
+            angle = math.atan2(principal_direction[1], principal_direction[0])
+            
+            # Length of the line approximated by range of points along principal direction
+            projected = np.dot(points_centered, principal_direction)
+            line_length = max(projected) - min(projected)
+            
+            self.debug_print(2, f"Line analysis: ratio={ratio:.2f}, angle={angle:.2f}, length={line_length:.2f}m")
+            
+            return is_line, angle, line_length
+        except Exception as e:
+            self.debug_print(1, f"Error in is_line_like: {str(e)}")
+            return False, 0, 0
     
     def is_rectangle_like(self, points_x, points_y):
         """Check if points form a rectangle-like structure"""
         if len(points_x) < 6:  # Need enough points to form a rectangle
             return False, 0, 0, 0
             
-        # Calculate basic dimensions
-        min_x, max_x = min(points_x), max(points_x)
-        min_y, max_y = min(points_y), max(points_y)
-        width = max_x - min_x
-        height = max_y - min_y
-        
-        # Calculate centroid
-        center_x = (min_x + max_x) / 2
-        center_y = (min_y + max_y) / 2
-        
-        # Check if points are distributed around the perimeter (for rectangle detection)
-        # Count points near each edge
-        points = np.column_stack([points_x, points_y])
-        margin = 0.05  # 5cm margin from edge
-        
-        top_edge = 0
-        bottom_edge = 0
-        left_edge = 0
-        right_edge = 0
-        
-        for p in points:
-            x, y = p[0], p[1]
-            # Check if point is near an edge
-            if abs(y - max_y) < margin:
-                top_edge += 1
-            if abs(y - min_y) < margin:
-                bottom_edge += 1
-            if abs(x - min_x) < margin:
-                left_edge += 1
-            if abs(x - max_x) < margin:
-                right_edge += 1
-                
-        # If we have points on at least 3 edges, it's likely a rectangle
-        edges_with_points = sum([1 for e in [top_edge, bottom_edge, left_edge, right_edge] if e > 0])
-        
-        return edges_with_points >= 3, 0, width, height  # Angle is 0 for now (aligned with axes)
+        try:
+            # Calculate basic dimensions
+            min_x, max_x = min(points_x), max(points_x)
+            min_y, max_y = min(points_y), max(points_y)
+            width = max_x - min_x
+            height = max_y - min_y
+            
+            # Calculate centroid
+            center_x = (min_x + max_x) / 2
+            center_y = (min_y + max_y) / 2
+            
+            # Check if points are distributed around the perimeter (for rectangle detection)
+            # Count points near each edge
+            points = np.column_stack([points_x, points_y])
+            margin = 0.05  # 5cm margin from edge
+            
+            top_edge = 0
+            bottom_edge = 0
+            left_edge = 0
+            right_edge = 0
+            interior_points = 0
+            
+            for p in points:
+                x, y = p[0], p[1]
+                # Check if point is near an edge
+                if abs(y - max_y) < margin:
+                    top_edge += 1
+                elif abs(y - min_y) < margin:
+                    bottom_edge += 1
+                elif abs(x - min_x) < margin:
+                    left_edge += 1
+                elif abs(x - max_x) < margin:
+                    right_edge += 1
+                else:
+                    interior_points += 1
+                    
+            # If we have points on at least 3 edges and not too many interior points, it's likely a rectangle
+            edges_with_points = sum([1 for e in [top_edge, bottom_edge, left_edge, right_edge] if e > 0])
+            
+            self.debug_print(2, f"Rectangle analysis: size={width:.2f}x{height:.2f}m, edges={edges_with_points}, " + 
+                             f"edge points: top={top_edge}, bottom={bottom_edge}, left={left_edge}, right={right_edge}, interior={interior_points}")
+            
+            # Rectangle criteria: at least 3 edges with points, and interior points < 50% of total
+            is_rectangle = edges_with_points >= 3 and interior_points < len(points_x) * 0.5
+            
+            return is_rectangle, 0, width, height  # Angle is 0 for now (aligned with axes)
+        except Exception as e:
+            self.debug_print(1, f"Error in is_rectangle_like: {str(e)}")
+            return False, 0, 0, 0
     
     def analyze_clusters(self, clusters):
         """Analyze clusters to find workstations"""
@@ -238,6 +324,22 @@ class WorkstationDetector:
         # Visualize line-like clusters
         line_markers = MarkerArray()
         marker_id = 0
+        
+        # Print each cluster's bounding box for debugging
+        for i, cluster in enumerate(clusters):
+            if len(cluster[0]) < 3:
+                continue
+                
+            # Get the cluster points
+            cluster_x, cluster_y = cluster[0], cluster[1]
+            
+            # Get basic dimensions
+            min_x, max_x = min(cluster_x), max(cluster_x)
+            min_y, max_y = min(cluster_y), max(cluster_y)
+            width = max_x - min_x
+            height = max_y - min_y
+            
+            self.debug_print(1, f"Cluster #{i+1}: {len(cluster_x)} points, size={width:.2f}x{height:.2f}m")
         
         for cluster in clusters:
             # Skip too small clusters
@@ -261,7 +363,7 @@ class WorkstationDetector:
             is_rect, rect_angle, rect_width, rect_height = self.is_rectangle_like(cluster_x, cluster_y)
             
             if is_rect:
-                rospy.loginfo(f"Rectangle-like cluster detected with dimensions {rect_width:.2f}x{rect_height:.2f}m")
+                self.debug_print(1, f"Rectangle-like cluster detected with dimensions {rect_width:.2f}x{rect_height:.2f}m")
                 
                 # Check if dimensions match our target (with tolerance)
                 tolerance = 0.3  # 30% tolerance
@@ -295,7 +397,7 @@ class WorkstationDetector:
                     pose.orientation.w = q[3]
                     
                     self.workstations_detected.append(pose)
-                    rospy.loginfo(f"Detected rectangular machine at ({center_x:.2f}, {center_y:.2f}) with dimensions {rect_width:.2f}x{rect_height:.2f}m")
+                    self.debug_print(1, f"Detected rectangular machine at ({center_x:.2f}, {center_y:.2f}) with dimensions {rect_width:.2f}x{rect_height:.2f}m")
                     continue  # Skip line analysis for this cluster
             
             # If not a rectangle, check if it's a line
@@ -303,7 +405,7 @@ class WorkstationDetector:
             
             # Debug info
             if is_line:
-                rospy.loginfo(f"Line-like cluster detected with length {line_length:.2f}m and angle {angle:.2f}")
+                self.debug_print(1, f"Line-like cluster detected with length {line_length:.2f}m and angle {angle:.2f}")
                 
                 # Visualize line as a cylinder
                 line_marker = Marker()
@@ -356,11 +458,11 @@ class WorkstationDetector:
                     machine_angle = angle
                     if line_length > self.machine_width * 1.2:
                         # Line is likely the long edge of machine
-                        rospy.loginfo(f"Line appears to be long edge of a machine")
+                        self.debug_print(1, f"Line appears to be long edge of a machine")
                     else:
                         # Line is likely the short edge, rotate 90 degrees
                         machine_angle += math.pi/2
-                        rospy.loginfo(f"Line appears to be short edge of a machine")
+                        self.debug_print(1, f"Line appears to be short edge of a machine")
                         
                     # Set orientation
                     q = tf.transformations.quaternion_from_euler(0, 0, machine_angle)
@@ -370,10 +472,10 @@ class WorkstationDetector:
                     pose.orientation.w = q[3]
                     
                     self.workstations_detected.append(pose)
-                    rospy.loginfo(f"Estimated machine at ({center_x:.2f}, {center_y:.2f}) from line detection")
+                    self.debug_print(1, f"Estimated machine at ({center_x:.2f}, {center_y:.2f}) from line detection")
             else:
                 # Not a line or rectangle - use regular detection with bounding box
-                rospy.loginfo(f"Regular cluster with dimensions {width:.2f}x{height:.2f}m with {len(cluster_x)} points")
+                self.debug_print(2, f"Regular cluster with dimensions {width:.2f}x{height:.2f}m with {len(cluster_x)} points")
                 
                 # Check for matching dimensions
                 tolerance = 0.3  # 30% tolerance
@@ -400,13 +502,13 @@ class WorkstationDetector:
                         # Partial view, horizontal orientation
                         orientation = 0
                         is_match = True
-                        rospy.loginfo("Detected partial view of machine (horizontal)")
+                        self.debug_print(1, "Detected partial view of machine (horizontal)")
                     elif ((height > self.machine_width * 1.2 and height < self.machine_length * 1.1 and
                           width > self.machine_width * 0.7)):
                         # Partial view, vertical orientation
                         orientation = math.pi / 2
                         is_match = True
-                        rospy.loginfo("Detected partial view of machine (vertical)")
+                        self.debug_print(1, "Detected partial view of machine (vertical)")
                 
                 if is_match:
                     # Create a pose for this workstation
@@ -423,7 +525,7 @@ class WorkstationDetector:
                     pose.orientation.w = q[3]
                     
                     self.workstations_detected.append(pose)
-                    rospy.loginfo(f"Detected machine at ({center_x:.2f}, {center_y:.2f}) with dimensions {width:.2f}x{height:.2f}m")
+                    self.debug_print(1, f"Detected machine at ({center_x:.2f}, {center_y:.2f}) with dimensions {width:.2f}x{height:.2f}m")
         
         # Publish line markers
         self.line_marker_pub.publish(line_markers)
@@ -477,10 +579,10 @@ class WorkstationDetector:
         # Update final list with stable detections (seen multiple times)
         self.workstations_detected = [
             detection["pose"] for detection in self.all_detections 
-            if detection["count"] >= 2  # Must be detected at least twice
+            if detection["count"] >= 1  # Changed from 2 to 1 for faster detection
         ]
         
-        rospy.loginfo(f"After merging: {len(self.workstations_detected)} stable workstations")
+        self.debug_print(1, f"After merging: {len(self.workstations_detected)} stable workstations")
     
     def publish_workstations(self):
         # Publish PoseArray
