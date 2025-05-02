@@ -38,11 +38,7 @@ class WorkstationDetector:
         # Store detected workstations for persistence
         self.all_detections = []  # Will store all valid workstation detections
         
-        # Debug flags
-        self.debug_level = 2  # 0=minimal, 1=normal, 2=verbose
-        
         rospy.loginfo("Machine detector initialized - looking for objects 70cm x 35cm directly in costmap")
-        rospy.loginfo("Debug level set to %d (0=minimal, 1=normal, 2=verbose)", self.debug_level)
 
     
     def costmap_callback(self, costmap_msg):
@@ -102,7 +98,7 @@ class WorkstationDetector:
         rospy.loginfo(f"Found {len(candidate_x)} candidate points for clustering")
         
         # Display min/max values in costmap for debugging threshold
-        if self.debug_level >= 2 and len(costmap_data) > 0:
+        if len(costmap_data) > 0:
             costmap_values = costmap_data.flatten()
             costmap_values = costmap_values[costmap_values >= 0]  # Remove unknown (-1) values
             if len(costmap_values) > 0:
