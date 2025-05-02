@@ -16,12 +16,13 @@ class WorkstationDetector:
         self.workstations_count = 0
         
         # Define machine dimensions (in meters)
-        self.machine_length = 0.70  # 80cm
-        self.machine_width = 0.35   # 30cm
+        self.machine_length = 0.70  # 70cm - adjusted from 0.80
+        self.machine_width = 0.35   # 35cm - adjusted from 0.30
         
         # Publishers
         self.workstation_pub = rospy.Publisher('/detected_workstations', PoseArray, queue_size=10)
         self.marker_pub = rospy.Publisher('/workstation_markers', MarkerArray, queue_size=10)
+        self.debug_marker_pub = rospy.Publisher('/candidate_points', MarkerArray, queue_size=10)
         
         # Subscribers
         self.static_map_sub = rospy.Subscriber('/map', OccupancyGrid, self.static_map_callback)
@@ -32,27 +33,37 @@ class WorkstationDetector:
         self.static_map_data = None
         self.costmap = None
         
-        rospy.loginfo("Machine detector initialized - looking for objects 80cm x 30cm")
+        # Debug counters
+        self.map_updates = 0
+        
+        rospy.loginfo("Machine detector initialized - looking for objects 70cm x 35cm")
     
     def static_map_callback(self, map_msg):
-        if self.static_map is None:
-            self.static_map = map_msg
-            self.static_map_data = np.array(map_msg.data).reshape(map_msg.info.height, map_msg.info.width)
-            rospy.loginfo("Static map received")
+        self.static_map = map_msg
+        self.static_map_data = np.array(map_msg.data).reshape(map_msg.info.height, map_msg.info.width)
+        rospy.loginfo(f"Static map received: {map_msg.info.width}x{map_msg.info.height}, resolution: {map_msg.info.resolution}")
+        
+        # Print some statistics about the static map
+        occupied = np.sum(self.static_map_data > 0)
+        free = np.sum(self.static_map_data == 0)
+        unknown = np.sum(self.static_map_data == -1)
+        rospy.loginfo(f"Static map stats: {occupied} occupied cells, {free} free cells, {unknown} unknown cells")
     
     def costmap_callback(self, costmap_msg):
         if self.static_map is None:
+            rospy.logwarn("Received costmap but static map not available yet")
             return
         
+        self.map_updates += 1
         self.costmap = costmap_msg
-        rospy.loginfo("Processing costmap to find workstations")
         
-        # Process the costmap to find workstations
-        self.find_workstations()
+        # Only process every 5th update to reduce computational load
+        if self.map_updates % 5 == 0:
+            rospy.loginfo("Processing costmap to find workstations")
+            self.find_workstations()
     
     def find_workstations(self):
         if self.static_map is None or self.costmap is None:
-            rospy.logwarn("Static map or costmap not available yet")
             return
             
         # Convert costmap to numpy array
@@ -71,6 +82,11 @@ class WorkstationDetector:
         # Let's consider cells with costmap value > 65 as potential obstacles (you may need to adjust this threshold)
         obstacle_threshold = 65  # Adjust based on your costmap values
         
+        # Debug counts
+        static_occupied_count = 0
+        costmap_occupied_count = 0
+        candidate_count = 0
+        
         # Lists to store candidate points
         candidate_x = []
         candidate_y = []
@@ -84,12 +100,20 @@ class WorkstationDetector:
                 static_y = int((y * self.costmap.info.resolution + self.costmap.info.origin.position.y - 
                                self.static_map.info.origin.position.y) / self.static_map.info.resolution)
                 
+                # Get costmap value
+                costmap_value = costmap_data[y, x]
+                if costmap_value > obstacle_threshold:
+                    costmap_occupied_count += 1
+                
                 if (0 <= static_x < self.static_map.info.width and 
                     0 <= static_y < self.static_map.info.height):
                     
                     # Get values from both maps
                     static_value = self.static_map_data[static_y, static_x]
-                    costmap_value = costmap_data[y, x]
+                    
+                    # Count occupied cells in static map
+                    if static_value > 0:
+                        static_occupied_count += 1
                     
                     # If free in static map but obstacle in costmap
                     if static_value == 0 and costmap_value > obstacle_threshold:
@@ -98,9 +122,48 @@ class WorkstationDetector:
                         world_y = y * self.costmap.info.resolution + self.costmap.info.origin.position.y
                         candidate_x.append(world_x)
                         candidate_y.append(world_y)
+                        candidate_count += 1
+        
+        # Diagnostic info
+        rospy.loginfo(f"Map comparison: Found {candidate_count} candidate points")
+        rospy.loginfo(f"Static map occupied cells: {static_occupied_count}, Costmap occupied cells: {costmap_occupied_count}")
+        
+        # Visualize candidate points
+        self.visualize_candidate_points(candidate_x, candidate_y)
         
         # Now cluster these points to find distinct workstations
         self.cluster_workstations(candidate_x, candidate_y)
+    
+    def visualize_candidate_points(self, x_points, y_points):
+        """Visualize candidate points as red spheres"""
+        marker_array = MarkerArray()
+        
+        # Limit to 100 markers to avoid overwhelming visualization
+        display_count = min(len(x_points), 100)
+        
+        for i in range(display_count):
+            marker = Marker()
+            marker.header.frame_id = "map"
+            marker.header.stamp = rospy.Time.now()
+            marker.ns = "candidate_points"
+            marker.id = i
+            marker.type = Marker.SPHERE
+            marker.action = Marker.ADD
+            marker.pose.position.x = x_points[i]
+            marker.pose.position.y = y_points[i]
+            marker.pose.position.z = 0.1
+            marker.scale.x = 0.1
+            marker.scale.y = 0.1
+            marker.scale.z = 0.1
+            marker.color.r = 1.0  # Red
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+            marker.color.a = 0.8
+            marker.lifetime = rospy.Duration(5)
+            
+            marker_array.markers.append(marker)
+        
+        self.debug_marker_pub.publish(marker_array)
     
     def cluster_workstations(self, x_points, y_points):
         if len(x_points) == 0:
@@ -134,11 +197,16 @@ class WorkstationDetector:
                 # Create new cluster
                 clusters.append([[x], [y]])
         
+        # Log the number of clusters and their sizes
+        cluster_sizes = [len(c[0]) for c in clusters]
+        rospy.loginfo(f"Found {len(clusters)} clusters with sizes: {cluster_sizes}")
+        
         # For each cluster, check if it matches our machine dimensions
         self.workstations_detected = []
         
         for cluster in clusters:
-            if len(cluster[0]) < 5:
+            # Reduced minimum cluster size from 5 to 3
+            if len(cluster[0]) < 3:
                 continue  # Skip too small clusters
                 
             # Get the extent of the cluster
@@ -148,29 +216,48 @@ class WorkstationDetector:
             width = max_x - min_x
             height = max_y - min_y
             
-            rospy.loginfo(f"Cluster dimensions: {width:.2f} x {height:.2f}m")
+            # Log the dimensions of each significant cluster
+            rospy.loginfo(f"Cluster dimensions: {width:.2f}x{height:.2f}m with {len(cluster[0])} points")
             
             # Check if dimensions approximately match our machine size (with some tolerance)
             # Either orientation could match (length×width or width×length)
-            tolerance = 0.2  # 20% tolerance
+            tolerance = 0.3  # 30% tolerance, increased from 20%
             
             orientation = 0  # Default orientation
-            if ((abs(width - self.machine_length) < self.machine_length * tolerance and 
-                 abs(height - self.machine_width) < self.machine_width * tolerance) or
-                (abs(width - self.machine_width) < self.machine_width * tolerance and 
-                 abs(height - self.machine_length) < self.machine_length * tolerance)):
-                
+            is_match = False
+            
+            # Check if the object matches our expected dimensions in either orientation
+            if (abs(width - self.machine_length) < self.machine_length * tolerance and 
+                abs(height - self.machine_width) < self.machine_width * tolerance):
+                # Machine is horizontal (length along x-axis)
+                orientation = 0
+                is_match = True
+            elif (abs(width - self.machine_width) < self.machine_width * tolerance and 
+                  abs(height - self.machine_length) < self.machine_length * tolerance):
+                # Machine is vertical (length along y-axis)
+                orientation = math.pi / 2
+                is_match = True
+            
+            # If partial view (at least half the expected size), also consider it a match
+            if not is_match:
+                # Check if it could be a partial view (at least half of original dimensions)
+                if (width > self.machine_width * 1.2 and width < self.machine_length and
+                    height > self.machine_width * 0.8):
+                    # Partial view, horizontal orientation
+                    orientation = 0
+                    is_match = True
+                    rospy.loginfo("Detected partial view of machine (horizontal)")
+                elif (height > self.machine_width * 1.2 and height < self.machine_length and
+                      width > self.machine_width * 0.8):
+                    # Partial view, vertical orientation
+                    orientation = math.pi / 2
+                    is_match = True
+                    rospy.loginfo("Detected partial view of machine (vertical)")
+            
+            if is_match:
                 # It's a match - calculate center
                 cx = sum(cluster[0]) / len(cluster[0])
                 cy = sum(cluster[1]) / len(cluster[1])
-                
-                # Determine orientation
-                if abs(width - self.machine_length) < self.machine_length * tolerance:
-                    # Machine is horizontal (length along x-axis)
-                    orientation = 0
-                else:
-                    # Machine is vertical (length along y-axis)
-                    orientation = math.pi / 2
                 
                 # Create a pose for this workstation
                 pose = Pose()
