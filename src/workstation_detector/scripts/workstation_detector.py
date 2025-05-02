@@ -33,8 +33,6 @@ class WorkstationDetector:
         self.cluster_pub = rospy.Publisher('/laser_clusters', MarkerArray, queue_size=10)
         
         # Subscribers - try multiple possible scan topics
-        rospy.Subscriber('/f_scan', LaserScan, self.laser_callback)
-        rospy.Subscriber('/b_scan', LaserScan, self.laser_callback)
         rospy.Subscriber('/scan', LaserScan, self.laser_callback)
         
         # Store detected workstations
