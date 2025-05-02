@@ -25,8 +25,9 @@ class WorkstationDetector:
         self.debug_marker_pub = rospy.Publisher('/candidate_points', MarkerArray, queue_size=10)
         self.line_marker_pub = rospy.Publisher('/line_candidates', MarkerArray, queue_size=10)
         
-        # Subscribers - only need costmap now
-        self.costmap_sub = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.costmap_callback)
+        # Subscribers - fixed topic name to match the actual topic
+        self.costmap_sub = rospy.Subscriber('/move_base_node/global_costmap/costmap', OccupancyGrid, self.costmap_callback)
+        rospy.loginfo("Subscribing to costmap topic: /move_base_node/global_costmap/costmap")
         
         # Store map
         self.costmap = None
@@ -68,7 +69,8 @@ class WorkstationDetector:
         costmap_data = np.array(self.costmap.data).reshape(self.costmap.info.height, self.costmap.info.width)
         
         # Consider cells with costmap value > threshold as potential obstacles
-        obstacle_threshold = 65  # Adjust based on your costmap values
+        # Lower threshold to 50 to catch more potential obstacles
+        obstacle_threshold = 50  # Adjust based on your costmap values
         
         # Lists to store candidate points (occupied cells)
         candidate_x = []
