@@ -26,8 +26,8 @@ class WorkstationDetector:
         self.line_marker_pub = rospy.Publisher('/line_candidates', MarkerArray, queue_size=10)
         
         # Subscribers - fixed topic name to match the actual topic
-        self.costmap_sub = rospy.Subscriber('/move_base_node/global_costmap/costmap', OccupancyGrid, self.costmap_callback)
-        rospy.loginfo("Subscribing to costmap topic: /move_base_node/global_costmap/costmap")
+        self.costmap_sub = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.costmap_callback)
+        rospy.loginfo("Subscribing to costmap topic: /move_base/global_costmap/costmap")
         
         # Store map
         self.costmap = None
@@ -43,22 +43,18 @@ class WorkstationDetector:
         
         rospy.loginfo("Machine detector initialized - looking for objects 70cm x 35cm directly in costmap")
         rospy.loginfo("Debug level set to %d (0=minimal, 1=normal, 2=verbose)", self.debug_level)
-    
-    def debug_print(self, level, message):
-        """Print debug message if debug_level >= level"""
-        if self.debug_level >= level:
-            rospy.loginfo(message)
+
     
     def costmap_callback(self, costmap_msg):
         self.map_updates += 1
         self.costmap = costmap_msg
         
-        self.debug_print(1, f"Received costmap update #{self.map_updates}, resolution: {costmap_msg.info.resolution}")
-        self.debug_print(2, f"Costmap dimensions: {costmap_msg.info.width}x{costmap_msg.info.height}")
+        rospy.loginfo(f"Received costmap update #{self.map_updates}, resolution: {costmap_msg.info.resolution}")
+        rospy.loginfo(f"Costmap dimensions: {costmap_msg.info.width}x{costmap_msg.info.height}")
         
         # Only process every 5th update to reduce computational load
         if self.map_updates % 5 == 0:
-            self.debug_print(1, "Processing costmap to find workstations")
+            rospy.loginfo("Processing costmap to find workstations")
             self.find_workstations()
     
     def find_workstations(self):
@@ -102,27 +98,27 @@ class WorkstationDetector:
                     candidate_y.append(world_y)
         
         # Diagnostic info
-        self.debug_print(1, f"Costmap analysis: {occupied_cells} occupied, {free_cells} free, {unknown_cells} unknown cells")
-        self.debug_print(1, f"Found {len(candidate_x)} candidate points for clustering")
+        rospy.loginfo(f"Costmap analysis: {occupied_cells} occupied, {free_cells} free, {unknown_cells} unknown cells")
+        rospy.loginfo(f"Found {len(candidate_x)} candidate points for clustering")
         
         # Display min/max values in costmap for debugging threshold
         if self.debug_level >= 2 and len(costmap_data) > 0:
             costmap_values = costmap_data.flatten()
             costmap_values = costmap_values[costmap_values >= 0]  # Remove unknown (-1) values
             if len(costmap_values) > 0:
-                self.debug_print(2, f"Costmap value range: min={np.min(costmap_values)}, max={np.max(costmap_values)}, threshold={obstacle_threshold}")
+                rospy.loginfo(f"Costmap value range: min={np.min(costmap_values)}, max={np.max(costmap_values)}, threshold={obstacle_threshold}")
             
         # Visualize candidate points
         self.visualize_candidate_points(candidate_x, candidate_y)
         
         if len(candidate_x) < 3:
-            self.debug_print(1, "Too few candidate points for clustering")
+            rospy.loginfo("Too few candidate points for clustering")
             return
             
         # Use a simple clustering algorithm (no sklearn dependency)
-        self.debug_print(1, "Starting custom clustering algorithm")
+        rospy.loginfo("Starting custom clustering algorithm")
         clusters = self.simple_clustering(candidate_x, candidate_y)
-        self.debug_print(1, f"Found {len(clusters)} clusters of points")
+        rospy.loginfo(f"Found {len(clusters)} clusters of points")
         
         # Detect objects in clusters
         self.analyze_clusters(clusters)
@@ -142,7 +138,7 @@ class WorkstationDetector:
         # Keep track of assigned points
         assigned = set()
         
-        self.debug_print(2, f"Starting clustering with {len(points)} points, max_distance={max_distance}")
+        rospy.loginfo(f"Starting clustering with {len(points)} points, max_distance={max_distance}")
         
         # Process each point
         for i, point in enumerate(points):
@@ -185,7 +181,7 @@ class WorkstationDetector:
                 cluster_x = [p[0] for p in cluster_points]
                 cluster_y = [p[1] for p in cluster_points]
                 clusters.append([cluster_x, cluster_y])
-                self.debug_print(2, f"Created cluster #{len(clusters)} with {len(cluster_points)} points")
+                rospy.loginfo(f"Created cluster #{len(clusters)} with {len(cluster_points)} points")
                 
         return clusters
     
@@ -257,11 +253,11 @@ class WorkstationDetector:
             projected = np.dot(points_centered, principal_direction)
             line_length = max(projected) - min(projected)
             
-            self.debug_print(2, f"Line analysis: ratio={ratio:.2f}, angle={angle:.2f}, length={line_length:.2f}m")
+            rospy.loginfo(f"Line analysis: ratio={ratio:.2f}, angle={angle:.2f}, length={line_length:.2f}m")
             
             return is_line, angle, line_length
         except Exception as e:
-            self.debug_print(1, f"Error in is_line_like: {str(e)}")
+            rospy.loginfo(f"Error in is_line_like: {str(e)}")
             return False, 0, 0
     
     def is_rectangle_like(self, points_x, points_y):
@@ -308,7 +304,7 @@ class WorkstationDetector:
             # If we have points on at least 3 edges and not too many interior points, it's likely a rectangle
             edges_with_points = sum([1 for e in [top_edge, bottom_edge, left_edge, right_edge] if e > 0])
             
-            self.debug_print(2, f"Rectangle analysis: size={width:.2f}x{height:.2f}m, edges={edges_with_points}, " + 
+            rospy.loginfo(f"Rectangle analysis: size={width:.2f}x{height:.2f}m, edges={edges_with_points}, " + 
                              f"edge points: top={top_edge}, bottom={bottom_edge}, left={left_edge}, right={right_edge}, interior={interior_points}")
             
             # Rectangle criteria: at least 3 edges with points, and interior points < 50% of total
@@ -316,7 +312,7 @@ class WorkstationDetector:
             
             return is_rectangle, 0, width, height  # Angle is 0 for now (aligned with axes)
         except Exception as e:
-            self.debug_print(1, f"Error in is_rectangle_like: {str(e)}")
+            rospy.loginfo(f"Error in is_rectangle_like: {str(e)}")
             return False, 0, 0, 0
     
     def analyze_clusters(self, clusters):
@@ -341,7 +337,7 @@ class WorkstationDetector:
             width = max_x - min_x
             height = max_y - min_y
             
-            self.debug_print(1, f"Cluster #{i+1}: {len(cluster_x)} points, size={width:.2f}x{height:.2f}m")
+            rospy.loginfo(f"Cluster #{i+1}: {len(cluster_x)} points, size={width:.2f}x{height:.2f}m")
         
         for cluster in clusters:
             # Skip too small clusters
@@ -365,7 +361,7 @@ class WorkstationDetector:
             is_rect, rect_angle, rect_width, rect_height = self.is_rectangle_like(cluster_x, cluster_y)
             
             if is_rect:
-                self.debug_print(1, f"Rectangle-like cluster detected with dimensions {rect_width:.2f}x{rect_height:.2f}m")
+                rospy.loginfo(f"Rectangle-like cluster detected with dimensions {rect_width:.2f}x{rect_height:.2f}m")
                 
                 # Check if dimensions match our target (with tolerance)
                 tolerance = 0.3  # 30% tolerance
@@ -399,7 +395,7 @@ class WorkstationDetector:
                     pose.orientation.w = q[3]
                     
                     self.workstations_detected.append(pose)
-                    self.debug_print(1, f"Detected rectangular machine at ({center_x:.2f}, {center_y:.2f}) with dimensions {rect_width:.2f}x{rect_height:.2f}m")
+                    rospy.loginfo(f"Detected rectangular machine at ({center_x:.2f}, {center_y:.2f}) with dimensions {rect_width:.2f}x{rect_height:.2f}m")
                     continue  # Skip line analysis for this cluster
             
             # If not a rectangle, check if it's a line
@@ -407,7 +403,7 @@ class WorkstationDetector:
             
             # Debug info
             if is_line:
-                self.debug_print(1, f"Line-like cluster detected with length {line_length:.2f}m and angle {angle:.2f}")
+                rospy.loginfo(f"Line-like cluster detected with length {line_length:.2f}m and angle {angle:.2f}")
                 
                 # Visualize line as a cylinder
                 line_marker = Marker()
@@ -460,11 +456,11 @@ class WorkstationDetector:
                     machine_angle = angle
                     if line_length > self.machine_width * 1.2:
                         # Line is likely the long edge of machine
-                        self.debug_print(1, f"Line appears to be long edge of a machine")
+                        rospy.loginfo(f"Line appears to be long edge of a machine")
                     else:
                         # Line is likely the short edge, rotate 90 degrees
                         machine_angle += math.pi/2
-                        self.debug_print(1, f"Line appears to be short edge of a machine")
+                        rospy.loginfo(f"Line appears to be short edge of a machine")
                         
                     # Set orientation
                     q = tf.transformations.quaternion_from_euler(0, 0, machine_angle)
@@ -474,10 +470,10 @@ class WorkstationDetector:
                     pose.orientation.w = q[3]
                     
                     self.workstations_detected.append(pose)
-                    self.debug_print(1, f"Estimated machine at ({center_x:.2f}, {center_y:.2f}) from line detection")
+                    rospy.loginfo(f"Estimated machine at ({center_x:.2f}, {center_y:.2f}) from line detection")
             else:
                 # Not a line or rectangle - use regular detection with bounding box
-                self.debug_print(2, f"Regular cluster with dimensions {width:.2f}x{height:.2f}m with {len(cluster_x)} points")
+                rospy.loginfo(f"Regular cluster with dimensions {width:.2f}x{height:.2f}m with {len(cluster_x)} points")
                 
                 # Check for matching dimensions
                 tolerance = 0.3  # 30% tolerance
@@ -504,13 +500,13 @@ class WorkstationDetector:
                         # Partial view, horizontal orientation
                         orientation = 0
                         is_match = True
-                        self.debug_print(1, "Detected partial view of machine (horizontal)")
+                        rospy.loginfo("Detected partial view of machine (horizontal)")
                     elif ((height > self.machine_width * 1.2 and height < self.machine_length * 1.1 and
                           width > self.machine_width * 0.7)):
                         # Partial view, vertical orientation
                         orientation = math.pi / 2
                         is_match = True
-                        self.debug_print(1, "Detected partial view of machine (vertical)")
+                        rospy.loginfo("Detected partial view of machine (vertical)")
                 
                 if is_match:
                     # Create a pose for this workstation
@@ -527,7 +523,7 @@ class WorkstationDetector:
                     pose.orientation.w = q[3]
                     
                     self.workstations_detected.append(pose)
-                    self.debug_print(1, f"Detected machine at ({center_x:.2f}, {center_y:.2f}) with dimensions {width:.2f}x{height:.2f}m")
+                    rospy.loginfo(f"Detected machine at ({center_x:.2f}, {center_y:.2f}) with dimensions {width:.2f}x{height:.2f}m")
         
         # Publish line markers
         self.line_marker_pub.publish(line_markers)
@@ -584,7 +580,7 @@ class WorkstationDetector:
             if detection["count"] >= 1  # Changed from 2 to 1 for faster detection
         ]
         
-        self.debug_print(1, f"After merging: {len(self.workstations_detected)} stable workstations")
+        rospy.loginfo(f"After merging: {len(self.workstations_detected)} stable workstations")
     
     def publish_workstations(self):
         # Publish PoseArray
