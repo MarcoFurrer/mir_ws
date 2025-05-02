@@ -6,6 +6,7 @@ from geometry_msgs.msg import PoseArray, Pose
 from visualization_msgs.msg import Marker, MarkerArray
 import tf
 import math
+from sklearn.cluster import DBSCAN  # For clustering points
 
 class WorkstationDetector:
     def __init__(self):
@@ -16,44 +17,30 @@ class WorkstationDetector:
         self.workstations_count = 0
         
         # Define machine dimensions (in meters)
-        self.machine_length = 0.70  # 70cm - adjusted from 0.80
-        self.machine_width = 0.35   # 35cm - adjusted from 0.30
+        self.machine_length = 0.70  # 70cm
+        self.machine_width = 0.35   # 35cm
         
         # Publishers
         self.workstation_pub = rospy.Publisher('/detected_workstations', PoseArray, queue_size=10)
         self.marker_pub = rospy.Publisher('/workstation_markers', MarkerArray, queue_size=10)
         self.debug_marker_pub = rospy.Publisher('/candidate_points', MarkerArray, queue_size=10)
+        self.line_marker_pub = rospy.Publisher('/line_candidates', MarkerArray, queue_size=10)
         
-        # Subscribers
-        self.static_map_sub = rospy.Subscriber('/map', OccupancyGrid, self.static_map_callback)
+        # Subscribers - only need costmap now
         self.costmap_sub = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.costmap_callback)
         
-        # Store maps
-        self.static_map = None
-        self.static_map_data = None
+        # Store map
         self.costmap = None
         
         # Debug counters
         self.map_updates = 0
         
-        rospy.loginfo("Machine detector initialized - looking for objects 70cm x 35cm")
-    
-    def static_map_callback(self, map_msg):
-        self.static_map = map_msg
-        self.static_map_data = np.array(map_msg.data).reshape(map_msg.info.height, map_msg.info.width)
-        rospy.loginfo(f"Static map received: {map_msg.info.width}x{map_msg.info.height}, resolution: {map_msg.info.resolution}")
+        # Store detected workstations for persistence
+        self.all_detections = []  # Will store all valid workstation detections
         
-        # Print some statistics about the static map
-        occupied = np.sum(self.static_map_data > 0)
-        free = np.sum(self.static_map_data == 0)
-        unknown = np.sum(self.static_map_data == -1)
-        rospy.loginfo(f"Static map stats: {occupied} occupied cells, {free} free cells, {unknown} unknown cells")
+        rospy.loginfo("Machine detector initialized - looking for objects 70cm x 35cm directly in costmap")
     
     def costmap_callback(self, costmap_msg):
-        if self.static_map is None:
-            rospy.logwarn("Received costmap but static map not available yet")
-            return
-        
         self.map_updates += 1
         self.costmap = costmap_msg
         
@@ -63,76 +50,75 @@ class WorkstationDetector:
             self.find_workstations()
     
     def find_workstations(self):
-        if self.static_map is None or self.costmap is None:
+        if self.costmap is None:
             return
             
         # Convert costmap to numpy array
         costmap_data = np.array(self.costmap.data).reshape(self.costmap.info.height, self.costmap.info.width)
         
-        # Different resolution and origin? We need to align the maps
-        # This is simplified - you may need more complex transformation if maps have different origins/resolutions
-        if (self.costmap.info.resolution != self.static_map.info.resolution or
-            self.costmap.info.origin.position.x != self.static_map.info.origin.position.x or
-            self.costmap.info.origin.position.y != self.static_map.info.origin.position.y):
-            rospy.logwarn("Maps have different resolutions or origins - will attempt basic alignment")
-        
-        # Find occupied cells in costmap that are free in static map
-        # 0 in static map means free space
-        # >0 in costmap means occupied or inflation
-        # Let's consider cells with costmap value > 65 as potential obstacles (you may need to adjust this threshold)
+        # Consider cells with costmap value > threshold as potential obstacles
         obstacle_threshold = 65  # Adjust based on your costmap values
         
         # Debug counts
-        static_occupied_count = 0
         costmap_occupied_count = 0
-        candidate_count = 0
         
-        # Lists to store candidate points
+        # Lists to store candidate points (occupied cells)
         candidate_x = []
         candidate_y = []
         
         # Iterate through the costmap
         for y in range(costmap_data.shape[0]):
-            for x in range(costmap_data.shape[1]):
-                # Check if this point is within static map bounds
-                static_x = int((x * self.costmap.info.resolution + self.costmap.info.origin.position.x - 
-                               self.static_map.info.origin.position.x) / self.static_map.info.resolution)
-                static_y = int((y * self.costmap.info.resolution + self.costmap.info.origin.position.y - 
-                               self.static_map.info.origin.position.y) / self.static_map.info.resolution)
-                
+            for x in range(costmap_data.shape[1]):                
                 # Get costmap value
                 costmap_value = costmap_data[y, x]
+                
+                # If obstacle in costmap
                 if costmap_value > obstacle_threshold:
                     costmap_occupied_count += 1
-                
-                if (0 <= static_x < self.static_map.info.width and 
-                    0 <= static_y < self.static_map.info.height):
                     
-                    # Get values from both maps
-                    static_value = self.static_map_data[static_y, static_x]
-                    
-                    # Count occupied cells in static map
-                    if static_value > 0:
-                        static_occupied_count += 1
-                    
-                    # If free in static map but obstacle in costmap
-                    if static_value == 0 and costmap_value > obstacle_threshold:
-                        # Convert to world coordinates
-                        world_x = x * self.costmap.info.resolution + self.costmap.info.origin.position.x
-                        world_y = y * self.costmap.info.resolution + self.costmap.info.origin.position.y
-                        candidate_x.append(world_x)
-                        candidate_y.append(world_y)
-                        candidate_count += 1
+                    # Convert to world coordinates
+                    world_x = x * self.costmap.info.resolution + self.costmap.info.origin.position.x
+                    world_y = y * self.costmap.info.resolution + self.costmap.info.origin.position.y
+                    candidate_x.append(world_x)
+                    candidate_y.append(world_y)
         
         # Diagnostic info
-        rospy.loginfo(f"Map comparison: Found {candidate_count} candidate points")
-        rospy.loginfo(f"Static map occupied cells: {static_occupied_count}, Costmap occupied cells: {costmap_occupied_count}")
+        rospy.loginfo(f"Found {len(candidate_x)} occupied cells in costmap")
         
         # Visualize candidate points
         self.visualize_candidate_points(candidate_x, candidate_y)
         
-        # Now cluster these points to find distinct workstations
-        self.cluster_workstations(candidate_x, candidate_y)
+        if len(candidate_x) < 3:
+            rospy.loginfo("Too few candidate points for clustering")
+            return
+            
+        # Use DBSCAN clustering algorithm to group nearby points
+        points = np.column_stack([candidate_x, candidate_y])
+        
+        # DBSCAN parameters:
+        # eps = maximum distance between points to be considered in same cluster (0.15m)
+        # min_samples = minimum number of points to form a cluster (3)
+        db = DBSCAN(eps=0.15, min_samples=3).fit(points)
+        
+        labels = db.labels_
+        unique_labels = set(labels)
+        
+        # Remove noise points (label = -1)
+        if -1 in unique_labels:
+            unique_labels.remove(-1)
+            
+        rospy.loginfo(f"DBSCAN found {len(unique_labels)} clusters")
+        
+        # Process clusters
+        clusters = []
+        for label in unique_labels:
+            cluster_points = points[labels == label]
+            cluster_x = cluster_points[:, 0].tolist()
+            cluster_y = cluster_points[:, 1].tolist()
+            clusters.append([cluster_x, cluster_y])
+            
+        # Detect line-like clusters and estimate full object dimensions
+        self.analyze_clusters(clusters)
     
     def visualize_candidate_points(self, x_points, y_points):
         """Visualize candidate points as red spheres"""
@@ -165,121 +151,336 @@ class WorkstationDetector:
         
         self.debug_marker_pub.publish(marker_array)
     
-    def cluster_workstations(self, x_points, y_points):
-        if len(x_points) == 0:
-            return
+    def is_line_like(self, points_x, points_y, threshold=0.9):
+        """Check if points form a line-like structure"""
+        if len(points_x) < 3:
+            return False, 0, 0
             
-        rospy.loginfo(f"Found {len(x_points)} candidate points, clustering...")
+        # Calculate principal components
+        points = np.column_stack([points_x, points_y])
+        mean = np.mean(points, axis=0)
+        points_centered = points - mean
         
-        # Simple clustering by distance
-        clusters = []
-        min_distance = 0.3  # Minimum distance between clusters (meters)
+        # Calculate covariance matrix
+        cov = np.cov(points_centered.T)
         
-        for i in range(len(x_points)):
-            x, y = x_points[i], y_points[i]
+        # Calculate eigenvalues and eigenvectors
+        eigenvalues, eigenvectors = np.linalg.eig(cov)
+        
+        # Sort by eigenvalue
+        idx = eigenvalues.argsort()[::-1]
+        eigenvalues = eigenvalues[idx]
+        eigenvectors = eigenvectors[:, idx]
+        
+        # If first eigenvalue is much larger than second, points are line-like
+        if len(eigenvalues) < 2 or eigenvalues[0] < 0.001:
+            return False, 0, 0
             
-            # Check if this point belongs to an existing cluster
-            found_cluster = False
-            for cluster in clusters:
-                # Calculate distance to cluster center
-                cx = sum(cluster[0]) / len(cluster[0])
-                cy = sum(cluster[1]) / len(cluster[1])
-                distance = np.sqrt((x - cx)**2 + (y - cy)**2)
+        ratio = eigenvalues[0] / (eigenvalues[1] + 0.00001)  # Avoid division by zero
+        is_line = ratio > threshold
+        
+        # Principal direction (orientation of the line)
+        principal_direction = eigenvectors[:, 0]
+        angle = math.atan2(principal_direction[1], principal_direction[0])
+        
+        # Length of the line approximated by range of points along principal direction
+        projected = np.dot(points_centered, principal_direction)
+        line_length = max(projected) - min(projected)
+        
+        return is_line, angle, line_length
+    
+    def is_rectangle_like(self, points_x, points_y):
+        """Check if points form a rectangle-like structure"""
+        if len(points_x) < 6:  # Need enough points to form a rectangle
+            return False, 0, 0, 0
+            
+        # Calculate basic dimensions
+        min_x, max_x = min(points_x), max(points_x)
+        min_y, max_y = min(points_y), max(points_y)
+        width = max_x - min_x
+        height = max_y - min_y
+        
+        # Calculate centroid
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
+        
+        # Check if points are distributed around the perimeter (for rectangle detection)
+        # Count points near each edge
+        points = np.column_stack([points_x, points_y])
+        margin = 0.05  # 5cm margin from edge
+        
+        top_edge = 0
+        bottom_edge = 0
+        left_edge = 0
+        right_edge = 0
+        
+        for p in points:
+            x, y = p[0], p[1]
+            # Check if point is near an edge
+            if abs(y - max_y) < margin:
+                top_edge += 1
+            if abs(y - min_y) < margin:
+                bottom_edge += 1
+            if abs(x - min_x) < margin:
+                left_edge += 1
+            if abs(x - max_x) < margin:
+                right_edge += 1
                 
-                if distance < min_distance:
-                    # Add to existing cluster
-                    cluster[0].append(x)
-                    cluster[1].append(y)
-                    found_cluster = True
-                    break
-            
-            if not found_cluster:
-                # Create new cluster
-                clusters.append([[x], [y]])
+        # If we have points on at least 3 edges, it's likely a rectangle
+        edges_with_points = sum([1 for e in [top_edge, bottom_edge, left_edge, right_edge] if e > 0])
         
-        # Log the number of clusters and their sizes
-        cluster_sizes = [len(c[0]) for c in clusters]
-        rospy.loginfo(f"Found {len(clusters)} clusters with sizes: {cluster_sizes}")
-        
-        # For each cluster, check if it matches our machine dimensions
+        return edges_with_points >= 3, 0, width, height  # Angle is 0 for now (aligned with axes)
+    
+    def analyze_clusters(self, clusters):
+        """Analyze clusters to find workstations"""
         self.workstations_detected = []
         
+        # Visualize line-like clusters
+        line_markers = MarkerArray()
+        marker_id = 0
+        
         for cluster in clusters:
-            # Reduced minimum cluster size from 5 to 3
+            # Skip too small clusters
             if len(cluster[0]) < 3:
-                continue  # Skip too small clusters
+                continue
                 
-            # Get the extent of the cluster
-            min_x, max_x = min(cluster[0]), max(cluster[0])
-            min_y, max_y = min(cluster[1]), max(cluster[1])
+            # Get the cluster points
+            cluster_x, cluster_y = cluster[0], cluster[1]
             
+            # Calculate cluster center
+            center_x = sum(cluster_x) / len(cluster_x)
+            center_y = sum(cluster_y) / len(cluster_y)
+            
+            # Get basic dimensions
+            min_x, max_x = min(cluster_x), max(cluster_x)
+            min_y, max_y = min(cluster_y), max(cluster_y)
             width = max_x - min_x
             height = max_y - min_y
             
-            # Log the dimensions of each significant cluster
-            rospy.loginfo(f"Cluster dimensions: {width:.2f}x{height:.2f}m with {len(cluster[0])} points")
+            # First check if cluster forms a rectangle
+            is_rect, rect_angle, rect_width, rect_height = self.is_rectangle_like(cluster_x, cluster_y)
             
-            # Check if dimensions approximately match our machine size (with some tolerance)
-            # Either orientation could match (length×width or width×length)
-            tolerance = 0.3  # 30% tolerance, increased from 20%
-            
-            orientation = 0  # Default orientation
-            is_match = False
-            
-            # Check if the object matches our expected dimensions in either orientation
-            if (abs(width - self.machine_length) < self.machine_length * tolerance and 
-                abs(height - self.machine_width) < self.machine_width * tolerance):
-                # Machine is horizontal (length along x-axis)
-                orientation = 0
-                is_match = True
-            elif (abs(width - self.machine_width) < self.machine_width * tolerance and 
-                  abs(height - self.machine_length) < self.machine_length * tolerance):
-                # Machine is vertical (length along y-axis)
-                orientation = math.pi / 2
-                is_match = True
-            
-            # If partial view (at least half the expected size), also consider it a match
-            if not is_match:
-                # Check if it could be a partial view (at least half of original dimensions)
-                if (width > self.machine_width * 1.2 and width < self.machine_length and
-                    height > self.machine_width * 0.8):
-                    # Partial view, horizontal orientation
+            if is_rect:
+                rospy.loginfo(f"Rectangle-like cluster detected with dimensions {rect_width:.2f}x{rect_height:.2f}m")
+                
+                # Check if dimensions match our target (with tolerance)
+                tolerance = 0.3  # 30% tolerance
+                orientation = 0  # Default orientation
+                is_match = False
+                
+                # Check if matches expected dimensions in either orientation
+                if (abs(rect_width - self.machine_length) < self.machine_length * tolerance and 
+                    abs(rect_height - self.machine_width) < self.machine_width * tolerance):
+                    # Machine is horizontal (length along x-axis)
                     orientation = 0
                     is_match = True
-                    rospy.loginfo("Detected partial view of machine (horizontal)")
-                elif (height > self.machine_width * 1.2 and height < self.machine_length and
-                      width > self.machine_width * 0.8):
-                    # Partial view, vertical orientation
+                elif (abs(rect_width - self.machine_width) < self.machine_width * tolerance and 
+                      abs(rect_height - self.machine_length) < self.machine_length * tolerance):
+                    # Machine is vertical (length along y-axis)
                     orientation = math.pi / 2
                     is_match = True
-                    rospy.loginfo("Detected partial view of machine (vertical)")
+                
+                if is_match:
+                    # Create a pose for this workstation
+                    pose = Pose()
+                    pose.position.x = center_x
+                    pose.position.y = center_y
+                    pose.position.z = 0.0
+                    
+                    # Set orientation using quaternion
+                    q = tf.transformations.quaternion_from_euler(0, 0, orientation)
+                    pose.orientation.x = q[0]
+                    pose.orientation.y = q[1]
+                    pose.orientation.z = q[2]
+                    pose.orientation.w = q[3]
+                    
+                    self.workstations_detected.append(pose)
+                    rospy.loginfo(f"Detected rectangular machine at ({center_x:.2f}, {center_y:.2f}) with dimensions {rect_width:.2f}x{rect_height:.2f}m")
+                    continue  # Skip line analysis for this cluster
             
-            if is_match:
-                # It's a match - calculate center
-                cx = sum(cluster[0]) / len(cluster[0])
-                cy = sum(cluster[1]) / len(cluster[1])
+            # If not a rectangle, check if it's a line
+            is_line, angle, line_length = self.is_line_like(cluster_x, cluster_y)
+            
+            # Debug info
+            if is_line:
+                rospy.loginfo(f"Line-like cluster detected with length {line_length:.2f}m and angle {angle:.2f}")
                 
-                # Create a pose for this workstation
-                pose = Pose()
-                pose.position.x = cx
-                pose.position.y = cy
-                pose.position.z = 0.0
+                # Visualize line as a cylinder
+                line_marker = Marker()
+                line_marker.header.frame_id = "map"
+                line_marker.header.stamp = rospy.Time.now()
+                line_marker.ns = "line_clusters"
+                line_marker.id = marker_id
+                marker_id += 1
+                line_marker.type = Marker.CYLINDER
+                line_marker.action = Marker.ADD
                 
-                # Set orientation using quaternion
-                q = tf.transformations.quaternion_from_euler(0, 0, orientation)
-                pose.orientation.x = q[0]
-                pose.orientation.y = q[1]
-                pose.orientation.z = q[2]
-                pose.orientation.w = q[3]
+                # Set position at center of the line
+                line_marker.pose.position.x = center_x
+                line_marker.pose.position.y = center_y
+                line_marker.pose.position.z = 0.25
                 
-                self.workstations_detected.append(pose)
-                rospy.loginfo(f"Detected machine at ({cx:.2f}, {cy:.2f}) with dimensions {width:.2f}x{height:.2f}m")
+                # Set orientation along the line angle
+                q = tf.transformations.quaternion_from_euler(0, 0, angle)
+                line_marker.pose.orientation.x = q[0]
+                line_marker.pose.orientation.y = q[1]
+                line_marker.pose.orientation.z = q[2]
+                line_marker.pose.orientation.w = q[3]
+                
+                # Set dimensions - length of the line, small width
+                line_marker.scale.x = line_length
+                line_marker.scale.y = 0.05  # Thin width
+                line_marker.scale.z = 0.5   # Height
+                
+                # Set color (blue)
+                line_marker.color.r = 0.0
+                line_marker.color.g = 0.0
+                line_marker.color.b = 1.0
+                line_marker.color.a = 0.7
+                
+                line_marker.lifetime = rospy.Duration(5)  # Short-lived
+                line_markers.markers.append(line_marker)
+                
+                # Detect machine from line segment
+                if self.machine_length * 0.5 <= line_length <= self.machine_length * 1.2:
+                    # This line segment could be one edge of a machine
+                    # Estimate full machine dimensions
+                    
+                    # Create a pose with orientation perpendicular to the line
+                    pose = Pose()
+                    pose.position.x = center_x
+                    pose.position.y = center_y
+                    pose.position.z = 0.0
+                    
+                    # Decide orientation based on line angle
+                    machine_angle = angle
+                    if line_length > self.machine_width * 1.2:
+                        # Line is likely the long edge of machine
+                        rospy.loginfo(f"Line appears to be long edge of a machine")
+                    else:
+                        # Line is likely the short edge, rotate 90 degrees
+                        machine_angle += math.pi/2
+                        rospy.loginfo(f"Line appears to be short edge of a machine")
+                        
+                    # Set orientation
+                    q = tf.transformations.quaternion_from_euler(0, 0, machine_angle)
+                    pose.orientation.x = q[0]
+                    pose.orientation.y = q[1]
+                    pose.orientation.z = q[2]
+                    pose.orientation.w = q[3]
+                    
+                    self.workstations_detected.append(pose)
+                    rospy.loginfo(f"Estimated machine at ({center_x:.2f}, {center_y:.2f}) from line detection")
+            else:
+                # Not a line or rectangle - use regular detection with bounding box
+                rospy.loginfo(f"Regular cluster with dimensions {width:.2f}x{height:.2f}m with {len(cluster_x)} points")
+                
+                # Check for matching dimensions
+                tolerance = 0.3  # 30% tolerance
+                orientation = 0  # Default orientation
+                is_match = False
+                
+                # Check if matches expected dimensions in either orientation
+                if (abs(width - self.machine_length) < self.machine_length * tolerance and 
+                    abs(height - self.machine_width) < self.machine_width * tolerance):
+                    # Machine is horizontal (length along x-axis)
+                    orientation = 0
+                    is_match = True
+                elif (abs(width - self.machine_width) < self.machine_width * tolerance and 
+                      abs(height - self.machine_length) < self.machine_length * tolerance):
+                    # Machine is vertical (length along y-axis)
+                    orientation = math.pi / 2
+                    is_match = True
+                
+                # If partial view (at least half the expected size), also consider it a match
+                if not is_match:
+                    # Check if it could be a partial view
+                    if ((width > self.machine_width * 1.2 and width < self.machine_length * 1.1 and
+                        height > self.machine_width * 0.7)):
+                        # Partial view, horizontal orientation
+                        orientation = 0
+                        is_match = True
+                        rospy.loginfo("Detected partial view of machine (horizontal)")
+                    elif ((height > self.machine_width * 1.2 and height < self.machine_length * 1.1 and
+                          width > self.machine_width * 0.7)):
+                        # Partial view, vertical orientation
+                        orientation = math.pi / 2
+                        is_match = True
+                        rospy.loginfo("Detected partial view of machine (vertical)")
+                
+                if is_match:
+                    # Create a pose for this workstation
+                    pose = Pose()
+                    pose.position.x = center_x
+                    pose.position.y = center_y
+                    pose.position.z = 0.0
+                    
+                    # Set orientation using quaternion
+                    q = tf.transformations.quaternion_from_euler(0, 0, orientation)
+                    pose.orientation.x = q[0]
+                    pose.orientation.y = q[1]
+                    pose.orientation.z = q[2]
+                    pose.orientation.w = q[3]
+                    
+                    self.workstations_detected.append(pose)
+                    rospy.loginfo(f"Detected machine at ({center_x:.2f}, {center_y:.2f}) with dimensions {width:.2f}x{height:.2f}m")
         
-        self.workstations_count = len(self.workstations_detected)
-        rospy.loginfo(f"Found {self.workstations_count} machines matching target dimensions")
+        # Publish line markers
+        self.line_marker_pub.publish(line_markers)
         
-        # Publish workstations
+        # Merge with past detections for stability
+        self.merge_with_past_detections()
+        
+        # Publish final workstation markers
         self.publish_workstations()
+    
+    def merge_with_past_detections(self, persistence_threshold=5):
+        """Merge current detections with past ones for stability"""
+        # Remove old detections that haven't been seen in a while
+        current_time = rospy.Time.now()
+        
+        # Filter the all_detections list to remove old entries
+        self.all_detections = [
+            detection for detection in self.all_detections 
+            if (current_time - detection["last_seen"]).to_sec() < persistence_threshold
+        ]
+        
+        # Update existing detections or add new ones
+        for pose in self.workstations_detected:
+            x, y = pose.position.x, pose.position.y
+            merged = False
+            
+            # Check if this detection matches any existing ones
+            for detection in self.all_detections:
+                existing_x = detection["pose"].position.x
+                existing_y = detection["pose"].position.y
+                
+                # If close enough, consider it the same workstation
+                if math.sqrt((x - existing_x)**2 + (y - existing_y)**2) < 0.5:  # 50cm threshold
+                    # Update position with moving average
+                    alpha = 0.3  # Weight for new observation
+                    detection["pose"].position.x = (1-alpha) * existing_x + alpha * x
+                    detection["pose"].position.y = (1-alpha) * existing_y + alpha * y
+                    detection["count"] += 1
+                    detection["last_seen"] = current_time
+                    merged = True
+                    break
+            
+            # If no match found, add as new detection
+            if not merged:
+                self.all_detections.append({
+                    "pose": pose,
+                    "count": 1,
+                    "last_seen": current_time
+                })
+        
+        # Update final list with stable detections (seen multiple times)
+        self.workstations_detected = [
+            detection["pose"] for detection in self.all_detections 
+            if detection["count"] >= 2  # Must be detected at least twice
+        ]
+        
+        rospy.loginfo(f"After merging: {len(self.workstations_detected)} stable workstations")
     
     def publish_workstations(self):
         # Publish PoseArray
