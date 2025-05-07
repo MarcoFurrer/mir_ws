@@ -11,10 +11,14 @@ import time
 class WorkstationDetector:
     def __init__(self):
         rospy.init_node('workstation_detector')
+        # Fix: Rate not rate (capital R)
+        self.rate = rospy.Rate(1)
         self.processing_interval = 1.0
         self.last_processed_time = 0
         
-        
+        # Add debug flag for development
+        self.debug = True
+        print("Debug mode enabled - will print laser callback info")
         
         # Subscribers - try multiple possible scan topics
         rospy.Subscriber('/scan', LaserScan, self.laser_callback)
@@ -27,6 +31,9 @@ class WorkstationDetector:
 
     def laser_callback(self, msg):
         """Process laser scan data at a controlled rate"""
+        # Simple print to verify callback is being called
+        print("Laser callback triggered!")
+        
         current_time = time.time()
         
         # Only process scans at the specified interval
@@ -35,29 +42,24 @@ class WorkstationDetector:
             
         self.last_processed_time = current_time
         
-        # Extract valid scan points
-        ranges = np.array(msg.ranges)
-        angles = np.linspace(msg.angle_min, msg.angle_max, len(ranges))
+        print(f"Processing scan message from topic: {msg._connection_header['topic']}")
+        print(f"Scan contains {len(msg.ranges)} points")
         
-        # Filter out invalid readings
-        valid_indices = np.logical_and(ranges > msg.range_min, ranges < msg.range_max)
-        valid_ranges = ranges[valid_indices]
-        valid_angles = angles[valid_indices]
-        
-        # Convert to Cartesian coordinates (robot frame)
-        x_points = valid_ranges * np.cos(valid_angles)
-        y_points = valid_ranges * np.sin(valid_angles)
+        # Process the laser scan to get points
+        points = self.process_laser_scan(msg)
         
         rospy.loginfo("\n--- Processing scan with %d valid points from %s ---", 
-                     len(valid_ranges), msg.header.frame_id)
+                     len(points), msg.header.frame_id)
         
         # Basic scan statistics
-        if len(valid_ranges) > 0:
-            min_dist = min(valid_ranges)
-            max_dist = max(valid_ranges)
-            avg_dist = sum(valid_ranges) / len(valid_ranges)
+        if points:
+            distances = [math.sqrt(p[0]**2 + p[1]**2) for p in points]
+            min_dist = min(distances)
+            max_dist = max(distances)
+            avg_dist = sum(distances) / len(distances)
             rospy.loginfo("Scan statistics: min=%.2fm, max=%.2fm, avg=%.2fm",
                          min_dist, max_dist, avg_dist)
+        
 
 
 if __name__ == '__main__':
