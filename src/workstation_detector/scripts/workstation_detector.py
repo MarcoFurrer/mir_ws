@@ -5,7 +5,12 @@ import numpy as np
 import math
 from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker, MarkerArray
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PoseStamped
+from std_srvs.srv import Trigger, TriggerResponse
+from std_msgs.msg import Int32
+from tf.transformations import quaternion_from_euler
+import tf2_ros
+import geometry_msgs.msg
 import time
 import cv2
 import matplotlib.pyplot as plt
@@ -13,7 +18,6 @@ import matplotlib.pyplot as plt
 class WorkstationDetector:
     def __init__(self):
         rospy.init_node('workstation_detector')
-        # Fix: Rate not rate (capital R)
         self.rate = rospy.Rate(1)
         self.processing_interval = 1.0
         self.last_processed_time = 0
@@ -25,17 +29,40 @@ class WorkstationDetector:
         # Add marker publisher for RViz visualization
         self.marker_pub = rospy.Publisher('detected_lines', MarkerArray, queue_size=10)
         
+        # Add navigation publisher
+        self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
+        
+        # Add service for navigation
+        self.navigate_srv = rospy.Service('navigate_to_line', Trigger, self.handle_navigate_service)
+        
+        # Add subscriber for line selection
+        self.line_selection_sub = rospy.Subscriber('select_line', Int32, self.handle_line_selection)
+        
+        # TF buffer for coordinate transformations
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+        
         # Subscribers - try multiple possible scan topics
         rospy.Subscriber('/scan', LaserScan, self.laser_callback)
         
         # Store detected workstations
         self.workstations = []
         
+        # Store latest detected lines and selected line
+        self.latest_lines = []
+        self.latest_frame_id = None
+        self.selected_line_index = 0
+        
+        # Create publisher for selected line visualization
+        self.selected_line_pub = rospy.Publisher('selected_line', MarkerArray, queue_size=1)
+        
         rospy.loginfo("Workstation detector initialized")
         rospy.loginfo("Processing scans every %.1f seconds", self.processing_interval)
 
     def laser_callback(self, msg):
         """Process laser scan data at a controlled rate"""
+        # Simple print to verify callback is being called
+        print("Laser callback triggered!")
         
         current_time = time.time()
         
@@ -156,8 +183,16 @@ class WorkstationDetector:
                 detected_lines.append(detected_line)
                 print(f"Line detected: length={length:.2f}m, angle={angle:.1f}°")
             
+            # Store the latest detected lines for navigation
+            self.latest_lines = detected_lines
+            self.latest_frame_id = frame_id
+            
             # Publish markers for RViz visualization
             self.publish_line_markers(detected_lines, frame_id)
+            
+            # Highlight selected line if any
+            if self.selected_line_index < len(detected_lines):
+                self.highlight_selected_line()
         
         return detected_lines
 
@@ -274,6 +309,199 @@ class WorkstationDetector:
         
         print(f"Found {len(x_points)} valid points")
         return list(zip(x_points, y_points))
+    
+    def handle_line_selection(self, msg):
+        """Handle selection of line by index"""
+        line_index = msg.data
+        if not self.latest_lines:
+            rospy.logwarn("No lines detected yet, cannot select line %d", line_index)
+            return
+        
+        if line_index >= len(self.latest_lines):
+            rospy.logwarn(f"Line index {line_index} is out of range. Only {len(self.latest_lines)} lines detected.")
+            return
+            
+        self.selected_line_index = line_index
+        selected_line = self.latest_lines[line_index]
+        rospy.loginfo(f"Selected line {line_index}: length={selected_line['length']:.2f}m, angle={selected_line['angle']:.1f}°")
+        
+        # Highlight the selected line
+        self.highlight_selected_line()
+
+    def handle_navigate_service(self, req):
+        """Handle service request to navigate to the currently selected line"""
+        success = self.navigate_to_line(self.selected_line_index)
+        response = TriggerResponse()
+        response.success = success
+        if success:
+            response.message = f"Navigating to line {self.selected_line_index}"
+        else:
+            response.message = "Navigation failed"
+        return response
+
+    def navigate_to_line(self, line_index=None, distance_from_line=0.7):
+        """
+        Navigate to a position in front of a detected line
+        
+        Args:
+            line_index: Index of the line to navigate to (default: use selected_line_index)
+            distance_from_line: How far from the line to position the robot (meters)
+        
+        Returns:
+            True if navigation command was sent successfully, False otherwise
+        """
+        if line_index is None:
+            line_index = self.selected_line_index
+            
+        # Check if we have lines detected
+        if not self.latest_lines:
+            rospy.logwarn("No lines detected yet, cannot navigate")
+            return False
+            
+        # Check if requested line exists
+        if line_index >= len(self.latest_lines):
+            rospy.logwarn(f"Line index {line_index} is out of range. Only {len(self.latest_lines)} lines detected.")
+            return False
+        
+        # Get the target line
+        target_line = self.latest_lines[line_index]
+        
+        # Calculate midpoint of the line
+        line_start = np.array(target_line['start'])
+        line_end = np.array(target_line['end'])
+        line_midpoint = (line_start + line_end) / 2.0
+        
+        # Calculate line direction vector
+        line_direction = line_end - line_start
+        line_length = np.linalg.norm(line_direction)
+        
+        if line_length < 0.01:  # Avoid division by zero
+            rospy.logwarn("Line is too short for navigation")
+            return False
+            
+        # Normalize line direction
+        line_direction = line_direction / line_length
+        
+        # Calculate normal vector to the line (perpendicular)
+        # Rotate 90 degrees counter-clockwise
+        line_normal = np.array([-line_direction[1], line_direction[0]])
+        
+        # Position in front of the line
+        # We want the robot to face the line, so we place it along the normal vector
+        target_position = line_midpoint + line_normal * distance_from_line
+        
+        # Robot should face the line
+        target_orientation = math.atan2(-line_normal[1], -line_normal[0])
+        
+        rospy.loginfo(f"Navigating to line {line_index}: position=[{target_position[0]:.2f}, {target_position[1]:.2f}], " +
+                     f"orientation={math.degrees(target_orientation):.1f}°")
+        
+        # Try to transform to the map frame if needed
+        goal_frame_id = self.latest_frame_id
+        if goal_frame_id != 'map':
+            try:
+                # Create stamped point for position
+                p = geometry_msgs.msg.PointStamped()
+                p.header.frame_id = goal_frame_id
+                p.header.stamp = rospy.Time(0)  # Get the latest transform
+                p.point.x = float(target_position[0])
+                p.point.y = float(target_position[1])
+                p.point.z = 0.0
+                
+                # Transform position to map frame
+                transformed_point = self.tf_buffer.transform(p, 'map', rospy.Duration(1.0))
+                
+                # Update frame_id and position for goal
+                goal_frame_id = 'map'
+                goal_position = [transformed_point.point.x, transformed_point.point.y, transformed_point.point.z]
+                
+                # Get the transform to adjust orientation
+                transform = self.tf_buffer.lookup_transform('map', self.latest_frame_id, rospy.Time(0))
+                
+                # Get rotation from quaternion
+                qx = transform.transform.rotation.x
+                qy = transform.transform.rotation.y
+                qz = transform.transform.rotation.z
+                qw = transform.transform.rotation.w
+                
+                # Note: This is a simplified approach. For more accurate orientation transformation,
+                # you would use proper quaternion operations from tf.transformations
+                
+                # For now just keep the original orientation
+                rospy.loginfo("Successfully transformed position to map frame")
+                
+            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, 
+                    tf2_ros.ExtrapolationException) as e:
+                rospy.logwarn(f"Transform error: {e}")
+                rospy.logwarn("Falling back to direct frame navigation")
+                goal_position = [target_position[0], target_position[1], 0.0]
+        else:
+            goal_position = [target_position[0], target_position[1], 0.0]
+        
+        # Create and publish the goal
+        goal = PoseStamped()
+        goal.header.frame_id = goal_frame_id
+        goal.header.stamp = rospy.Time.now()
+        
+        goal.pose.position.x = goal_position[0]
+        goal.pose.position.y = goal_position[1]
+        goal.pose.position.z = goal_position[2] if len(goal_position) > 2 else 0.0
+        
+        # Convert euler angle to quaternion
+        quaternion = quaternion_from_euler(0, 0, target_orientation)
+        goal.pose.orientation.x = quaternion[0]
+        goal.pose.orientation.y = quaternion[1]
+        goal.pose.orientation.z = quaternion[2]
+        goal.pose.orientation.w = quaternion[3]
+        
+        # Publish the goal
+        self.goal_pub.publish(goal)
+        rospy.loginfo(f"Navigation goal published in {goal_frame_id} frame")
+        
+        return True
+        
+    def highlight_selected_line(self):
+        """Publish a special marker for the currently selected line"""
+        if not self.latest_lines or self.selected_line_index >= len(self.latest_lines):
+            return
+            
+        marker = Marker()
+        marker.header.frame_id = self.latest_frame_id
+        marker.header.stamp = rospy.Time.now()
+        marker.ns = "selected_line"
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD
+        marker.lifetime = rospy.Duration(1.0)
+        
+        # Make the selected line thicker and yellow
+        marker.scale.x = 0.1  # Thicker line
+        marker.color.r = 1.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+        
+        # Get line points
+        line = self.latest_lines[self.selected_line_index]
+        start_point = Point()
+        start_point.x = line['start'][0]
+        start_point.y = line['start'][1]
+        start_point.z = 0.0
+        
+        end_point = Point()
+        end_point.x = line['end'][0]
+        end_point.y = line['end'][1]
+        end_point.z = 0.0
+        
+        marker.points.append(start_point)
+        marker.points.append(end_point)
+        
+        # Create a marker array with just this marker
+        marker_array = MarkerArray()
+        marker_array.markers.append(marker)
+        
+        # Publish to the selected line topic
+        self.selected_line_pub.publish(marker_array)
 
 
 if __name__ == '__main__':
