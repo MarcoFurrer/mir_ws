@@ -36,8 +36,6 @@ class WorkstationDetector:
 
     def laser_callback(self, msg):
         """Process laser scan data at a controlled rate"""
-        # Simple print to verify callback is being called
-        print("Laser callback triggered!")
         
         current_time = time.time()
         
@@ -173,8 +171,13 @@ class WorkstationDetector:
         """
         marker_array = MarkerArray()
         
+        # Use current time for all markers to prevent "too old" errors
+        current_time = rospy.Time.now()
+        
         # Delete previous markers
         delete_marker = Marker()
+        delete_marker.header.stamp = current_time
+        delete_marker.header.frame_id = frame_id
         delete_marker.action = Marker.DELETEALL
         marker_array.markers.append(delete_marker)
         
@@ -182,11 +185,14 @@ class WorkstationDetector:
         for i, line in enumerate(lines):
             marker = Marker()
             marker.header.frame_id = frame_id
-            marker.header.stamp = rospy.Time.now()
+            marker.header.stamp = current_time  # Use current time for all markers
             marker.ns = "detected_lines"
             marker.id = i
             marker.type = Marker.LINE_STRIP
             marker.action = Marker.ADD
+            
+            # Add a lifetime to the marker
+            marker.lifetime = rospy.Duration(1.0)  # Display for 1 second
             
             # Set line properties
             marker.scale.x = 0.05  # Line width
