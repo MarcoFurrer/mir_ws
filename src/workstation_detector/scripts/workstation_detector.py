@@ -396,56 +396,14 @@ class WorkstationDetector:
         rospy.loginfo(f"Navigating to line {line_index}: position=[{target_position[0]:.2f}, {target_position[1]:.2f}], " +
                      f"orientation={math.degrees(target_orientation):.1f}°")
         
-        # Try to transform to the map frame if needed
-        goal_frame_id = self.latest_frame_id
-        if goal_frame_id != 'map':
-            try:
-                # Create stamped point for position
-                p = geometry_msgs.msg.PointStamped()
-                p.header.frame_id = goal_frame_id
-                p.header.stamp = rospy.Time(0)  # Get the latest transform
-                p.point.x = float(target_position[0])
-                p.point.y = float(target_position[1])
-                p.point.z = 0.0
-                
-                # Transform position to map frame
-                transformed_point = self.tf_buffer.transform(p, 'map', rospy.Duration(1.0))
-                
-                # Update frame_id and position for goal
-                goal_frame_id = 'map'
-                goal_position = [transformed_point.point.x, transformed_point.point.y, transformed_point.point.z]
-                
-                # Get the transform to adjust orientation
-                transform = self.tf_buffer.lookup_transform('map', self.latest_frame_id, rospy.Time(0))
-                
-                # Get rotation from quaternion
-                qx = transform.transform.rotation.x
-                qy = transform.transform.rotation.y
-                qz = transform.transform.rotation.z
-                qw = transform.transform.rotation.w
-                
-                # Note: This is a simplified approach. For more accurate orientation transformation,
-                # you would use proper quaternion operations from tf.transformations
-                
-                # For now just keep the original orientation
-                rospy.loginfo("Successfully transformed position to map frame")
-                
-            except (tf2_ros.LookupException, tf2_ros.ConnectivityException, 
-                    tf2_ros.ExtrapolationException) as e:
-                rospy.logwarn(f"Transform error: {e}")
-                rospy.logwarn("Falling back to direct frame navigation")
-                goal_position = [target_position[0], target_position[1], 0.0]
-        else:
-            goal_position = [target_position[0], target_position[1], 0.0]
-        
-        # Create and publish the goal
+        # Create goal directly in the laser frame
         goal = PoseStamped()
-        goal.header.frame_id = goal_frame_id
+        goal.header.frame_id = self.latest_frame_id
         goal.header.stamp = rospy.Time.now()
         
-        goal.pose.position.x = goal_position[0]
-        goal.pose.position.y = goal_position[1]
-        goal.pose.position.z = goal_position[2] if len(goal_position) > 2 else 0.0
+        goal.pose.position.x = float(target_position[0])
+        goal.pose.position.y = float(target_position[1])
+        goal.pose.position.z = 0.0
         
         # Convert euler angle to quaternion
         quaternion = quaternion_from_euler(0, 0, target_orientation)
@@ -456,7 +414,7 @@ class WorkstationDetector:
         
         # Publish the goal
         self.goal_pub.publish(goal)
-        rospy.loginfo(f"Navigation goal published in {goal_frame_id} frame")
+        rospy.loginfo(f"Navigation goal published in {self.latest_frame_id} frame")
         
         return True
         
