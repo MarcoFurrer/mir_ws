@@ -22,6 +22,9 @@ class WorkstationDetector:
         self.debug = True
         print("Debug mode enabled - will print laser callback info")
         
+        # Add marker publisher for RViz visualization
+        self.marker_pub = rospy.Publisher('detected_lines', MarkerArray, queue_size=10)
+        
         # Subscribers - try multiple possible scan topics
         rospy.Subscriber('/scan', LaserScan, self.laser_callback)
         
@@ -63,12 +66,12 @@ class WorkstationDetector:
                          min_dist, max_dist, avg_dist)
             
             # Detect lines using Hough transform
-            lines = self.detect_lines_hough(points)
+            lines = self.detect_lines_hough(points, frame_id=msg.header.frame_id)
             if lines:
                 rospy.loginfo(f"Detected {len(lines)} lines in the scan")
 
     def detect_lines_hough(self, points, rho=0.05, theta=np.pi/180, 
-                       threshold=10, min_line_length=0.3, max_line_gap=0.2):
+                       threshold=10, min_line_length=0.3, max_line_gap=0.2, frame_id='base_link'):
         """
         Detect lines in laser scan data using Hough Transform
         
@@ -79,6 +82,7 @@ class WorkstationDetector:
             threshold: Minimum number of intersections to detect a line
             min_line_length: Minimum line length in meters
             max_line_gap: Maximum gap between points on the same line in meters
+            frame_id: Frame ID of the laser scan for visualization
             
         Returns:
             List of detected lines as (rho, theta) pairs
@@ -154,7 +158,92 @@ class WorkstationDetector:
                 detected_lines.append(detected_line)
                 print(f"Line detected: length={length:.2f}m, angle={angle:.1f}°")
             
+            # Publish markers for RViz visualization
+            self.publish_line_markers(detected_lines, frame_id)
+        
         return detected_lines
+
+    def publish_line_markers(self, lines, frame_id):
+        """
+        Publish detected lines as RViz markers
+        
+        Args:
+            lines: List of detected lines
+            frame_id: Frame ID from the laser scan
+        """
+        marker_array = MarkerArray()
+        
+        # Delete previous markers
+        delete_marker = Marker()
+        delete_marker.action = Marker.DELETEALL
+        marker_array.markers.append(delete_marker)
+        
+        # Create a marker for each line
+        for i, line in enumerate(lines):
+            marker = Marker()
+            marker.header.frame_id = frame_id
+            marker.header.stamp = rospy.Time.now()
+            marker.ns = "detected_lines"
+            marker.id = i
+            marker.type = Marker.LINE_STRIP
+            marker.action = Marker.ADD
+            
+            # Set line properties
+            marker.scale.x = 0.05  # Line width
+            
+            # Color based on line angle for better visualization
+            angle = line['angle'] % 180
+            # Use HSV color space for smooth color transitions
+            # Map angle 0-180 to hue 0-1
+            hue = angle / 180.0
+            # Convert to RGB (simplified conversion)
+            if hue < 1/6:
+                marker.color.r = 1.0
+                marker.color.g = hue * 6
+                marker.color.b = 0.0
+            elif hue < 2/6:
+                marker.color.r = (2/6 - hue) * 6
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+            elif hue < 3/6:
+                marker.color.r = 0.0
+                marker.color.g = 1.0
+                marker.color.b = (hue - 2/6) * 6
+            elif hue < 4/6:
+                marker.color.r = 0.0
+                marker.color.g = (4/6 - hue) * 6
+                marker.color.b = 1.0
+            elif hue < 5/6:
+                marker.color.r = (hue - 4/6) * 6
+                marker.color.g = 0.0
+                marker.color.b = 1.0
+            else:
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = (1.0 - hue) * 6
+                
+            marker.color.a = 1.0  # Full opacity
+            
+            # Set line endpoints
+            start_point = Point()
+            start_point.x = line['start'][0]
+            start_point.y = line['start'][1]
+            start_point.z = 0.0
+            
+            end_point = Point()
+            end_point.x = line['end'][0]
+            end_point.y = line['end'][1]
+            end_point.z = 0.0
+            
+            marker.points.append(start_point)
+            marker.points.append(end_point)
+            
+            # Add to marker array
+            marker_array.markers.append(marker)
+            
+        # Publish the marker array
+        self.marker_pub.publish(marker_array)
+        print(f"Published {len(lines)} line markers to RViz")
 
     def process_laser_scan(self, msg):
         """
@@ -184,7 +273,7 @@ class WorkstationDetector:
 if __name__ == '__main__':
     try:
         detector = WorkstationDetector()
-        print("Workstation detector running - waiting for laser scan data...")
+        rospy.loginfo("Workstation detector running. Press Ctrl+C to stop.")
         rospy.spin()
     except rospy.ROSInterruptException:
         pass
