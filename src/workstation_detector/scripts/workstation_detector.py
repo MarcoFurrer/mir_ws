@@ -11,60 +11,62 @@ import time
 class WorkstationDetector:
     def __init__(self):
         rospy.init_node('workstation_detector')
-        # Fix: Rate not rate (capital R)
-        self.rate = rospy.Rate(1)
-        self.processing_interval = 1.0
-        self.last_processed_time = 0
-        
-        # Add debug flag for development
-        self.debug = True
-        print("Debug mode enabled - will print laser callback info")
         
         # Subscribers - try multiple possible scan topics
         rospy.Subscriber('/scan', LaserScan, self.laser_callback)
-        
-        # Store detected workstations
-        self.workstations = []
-        
-        rospy.loginfo("Workstation detector initialized")
-        rospy.loginfo("Processing scans every %.1f seconds", self.processing_interval)
-
+    
     def laser_callback(self, msg):
-        """Process laser scan data at a controlled rate"""
+        """
+        Process laser scan data and return a list of (x,y) points
+        """
         # Simple print to verify callback is being called
         print("Laser callback triggered!")
         
-        current_time = time.time()
+        # Get the points from the laser scan
+        points = self.laser_scan_to_points(msg)
         
-        # Only process scans at the specified interval
-        if current_time - self.last_processed_time < self.processing_interval:
-            return
-            
-        self.last_processed_time = current_time
+        # Print basic information about the points
+        print(f"Extracted {len(points)} points from laser scan")
         
-        print(f"Processing scan message from topic: {msg._connection_header['topic']}")
-        print(f"Scan contains {len(msg.ranges)} points")
-        
-        # Process the laser scan to get points
-        points = self.process_laser_scan(msg)
-        
-        rospy.loginfo("\n--- Processing scan with %d valid points from %s ---", 
-                     len(points), msg.header.frame_id)
-        
-        # Basic scan statistics
+        # Optionally print the first few points for debugging
         if points:
-            distances = [math.sqrt(p[0]**2 + p[1]**2) for p in points]
-            min_dist = min(distances)
-            max_dist = max(distances)
-            avg_dist = sum(distances) / len(distances)
-            rospy.loginfo("Scan statistics: min=%.2fm, max=%.2fm, avg=%.2fm",
-                         min_dist, max_dist, avg_dist)
+            print(f"First 5 points: {points[:5]}")
         
+        return points
+    
+    def laser_scan_to_points(self, scan_msg):
+        """
+        Convert a LaserScan message to a list of (x,y) points
+        """
+        ranges = np.array(scan_msg.ranges)
+        angles = np.linspace(scan_msg.angle_min, scan_msg.angle_max, len(ranges))
+        
+        # Filter out invalid readings (infinity, NaN, etc.)
+        valid_indices = np.isfinite(ranges)
+        
+        # Apply range limits if available
+        if hasattr(scan_msg, 'range_min') and hasattr(scan_msg, 'range_max'):
+            range_filter = np.logical_and(ranges >= scan_msg.range_min, 
+                                         ranges <= scan_msg.range_max)
+            valid_indices = np.logical_and(valid_indices, range_filter)
+        
+        valid_ranges = ranges[valid_indices]
+        valid_angles = angles[valid_indices]
+        
+        # Convert polar (range, angle) to Cartesian (x, y) coordinates
+        x_points = valid_ranges * np.cos(valid_angles)
+        y_points = valid_ranges * np.sin(valid_angles)
+        
+        # Combine into a list of (x,y) points
+        points = list(zip(x_points, y_points))
+        
+        return points
 
 
 if __name__ == '__main__':
     try:
         detector = WorkstationDetector()
+        print("Workstation detector running - waiting for laser scan data...")
         rospy.spin()
     except rospy.ROSInterruptException:
         pass
