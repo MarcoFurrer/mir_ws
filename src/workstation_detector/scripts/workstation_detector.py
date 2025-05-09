@@ -17,7 +17,6 @@ import matplotlib.pyplot as plt
 
 class WorkstationDetector:
     def __init__(self):
-        rospy.init_node('workstation_detector')
         self.rate = rospy.Rate(1)
         self.processing_interval = 1.0
         self.last_processed_time = 0
