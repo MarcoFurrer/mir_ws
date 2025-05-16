@@ -13,7 +13,7 @@ from tf.transformations import quaternion_from_euler
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(script_dir)
 
-def navigate_to_line_with_cmd_vel(detector, line_index=0, distance_from_line=0.7):
+def navigate_to_line_with_cmd_vel(detector, line_index=0, distance_from_line=0.4):
     """
     Navigate to a line using direct velocity commands
     

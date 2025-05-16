@@ -293,7 +293,7 @@ def main():
         cmd_vel_pub.publish(stop_cmd)
         
         # Small pause between navigation commands
-        rospy.sleep(2.0)
+        rospy.sleep(1.0)
     
     # Finish with a celebratory spin
     rospy.loginfo("Completed visiting all lines in optimal order! Doing a final rotation...")
