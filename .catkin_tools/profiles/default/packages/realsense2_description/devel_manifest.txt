@@ -1,0 +1,5 @@
+realsense-ros/realsense2_description
+/home/joel/Desktop/mir_ws/devel/.private/realsense2_description/cmake.lock /home/joel/Desktop/mir_ws/devel/./cmake.lock
+/home/joel/Desktop/mir_ws/devel/.private/realsense2_description/share/realsense2_description/cmake/realsense2_descriptionConfig-version.cmake /home/joel/Desktop/mir_ws/devel/share/realsense2_description/cmake/realsense2_descriptionConfig-version.cmake
+/home/joel/Desktop/mir_ws/devel/.private/realsense2_description/share/realsense2_description/cmake/realsense2_descriptionConfig.cmake /home/joel/Desktop/mir_ws/devel/share/realsense2_description/cmake/realsense2_descriptionConfig.cmake
+/home/joel/Desktop/mir_ws/devel/.private/realsense2_description/lib/pkgconfig/realsense2_description.pc /home/joel/Desktop/mir_ws/devel/lib/pkgconfig/realsense2_description.pc

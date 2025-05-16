@@ -1,0 +1,38 @@
+digraph G {
+"base_link" -> "surface"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"base_footprint" -> "base_link"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"imu_link" -> "imu_frame"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"base_link" -> "imu_link"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"base_link" -> "us_1_frame"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"base_link" -> "us_2_frame"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"camera_floor_left_link" -> "camera_floor_left_depth_optical_frame"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"base_link" -> "camera_floor_left_link"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"odom" -> "base_footprint"[label="Broadcaster: /mir_bridge\nAverage rate: 41.529 Hz\nMost recent transform: 1745591330.126 ( -6856.414 sec old)\nBuffer length: 4.768 sec\n"];
+"camera_floor_left_color_frame" -> "camera_floor_left_color_optical_frame"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"camera_floor_left_link" -> "camera_floor_left_color_frame"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"camera_floor_right_link" -> "camera_floor_right_depth_optical_frame"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"base_link" -> "camera_floor_right_link"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"camera_floor_right_color_frame" -> "camera_floor_right_color_optical_frame"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"camera_floor_right_link" -> "camera_floor_right_color_frame"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"camera_floor_right_link" -> "camera_infra1_frame"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"camera_infra1_frame" -> "camera_infra1_optical_frame"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"camera_floor_right_link" -> "camera_infra2_frame"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"camera_infra2_frame" -> "camera_infra2_optical_frame"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"base_link" -> "front_laser_link"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"map" -> "odom"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"base_link" -> "back_laser_link"[label="Broadcaster: /mir_bridge\nAverage rate: 10000.000 Hz\nMost recent transform: 0.000 ( 1745584473.712 sec old)\nBuffer length: 0.000 sec\n"];
+"base_link" -> "bl_caster_rotation_link"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 32.057 Hz\nMost recent transform: 1745584473.691 ( 0.020 sec old)\nBuffer length: 4.960 sec\n"];
+"bl_caster_rotation_link" -> "bl_caster_wheel_link"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 32.057 Hz\nMost recent transform: 1745584473.691 ( 0.020 sec old)\nBuffer length: 4.960 sec\n"];
+"base_link" -> "br_caster_rotation_link"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 32.057 Hz\nMost recent transform: 1745584473.691 ( 0.020 sec old)\nBuffer length: 4.960 sec\n"];
+"br_caster_rotation_link" -> "br_caster_wheel_link"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 32.057 Hz\nMost recent transform: 1745584473.691 ( 0.020 sec old)\nBuffer length: 4.960 sec\n"];
+"base_link" -> "fl_caster_rotation_link"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 32.057 Hz\nMost recent transform: 1745584473.691 ( 0.020 sec old)\nBuffer length: 4.960 sec\n"];
+"fl_caster_rotation_link" -> "fl_caster_wheel_link"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 32.057 Hz\nMost recent transform: 1745584473.691 ( 0.020 sec old)\nBuffer length: 4.960 sec\n"];
+"base_link" -> "fr_caster_rotation_link"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 32.057 Hz\nMost recent transform: 1745584473.691 ( 0.020 sec old)\nBuffer length: 4.960 sec\n"];
+"fr_caster_rotation_link" -> "fr_caster_wheel_link"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 32.057 Hz\nMost recent transform: 1745584473.691 ( 0.020 sec old)\nBuffer length: 4.960 sec\n"];
+"base_link" -> "left_wheel_link"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 32.057 Hz\nMost recent transform: 1745584473.691 ( 0.020 sec old)\nBuffer length: 4.960 sec\n"];
+"base_link" -> "right_wheel_link"[label="Broadcaster: /tf_remove_state_publisher_frames\nAverage rate: 32.057 Hz\nMost recent transform: 1745584473.691 ( 0.020 sec old)\nBuffer length: 4.960 sec\n"];
+edge [style=invis];
+ subgraph cluster_legend { style=bold; color=black; label ="view_frames Result";
+"Recorded at time: 1745584473.712"[ shape=plaintext ] ;
+ }->"map";
+}
