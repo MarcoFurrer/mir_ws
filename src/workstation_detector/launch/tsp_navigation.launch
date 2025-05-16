@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Launch workstation detection nodes -->
+  <include file="$(find workstation_detector)/launch/workstation_detection.launch"/>
+  
+  <!-- Launch TSP navigation node -->
+  <node pkg="workstation_detector" type="navigate_with_tsp.py" name="navigate_with_tsp" output="screen">
+    <!-- Optional parameters for line filtering -->
+    <param name="min_line_length" value="0.4"/>
+    <param name="max_line_length" value="1.5"/>
+    <param name="wait_time" value="15"/>
+    <param name="min_wait_time" value="5"/>
+  </node>
+</launch>
