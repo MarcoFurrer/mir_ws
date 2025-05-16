@@ -26,7 +26,7 @@ def main():
     detector = WorkstationDetector()
     
     # Wait for lines to be detected
-    rate = rospy.Rate(1)  # 1 Hz check rate
+    rate = rospy.Rate(5)  # 1 Hz check rate
     max_wait_time = 10  # Maximum wait time in seconds
     wait_count = 0
     

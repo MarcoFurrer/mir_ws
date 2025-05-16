@@ -21,10 +21,6 @@ class WorkstationDetector:
         self.processing_interval = 1.0
         self.last_processed_time = 0
         
-        # Add debug flag for development
-        self.debug = True
-        print("Debug mode enabled - will print laser callback info")
-        
         # Add marker publisher for RViz visualization
         self.marker_pub = rospy.Publisher('detected_lines', MarkerArray, queue_size=10)
         
