@@ -1,0 +1,8 @@
+workstation_detector
+/home/joel/Desktop/mir_ws/devel/.private/workstation_detector/cmake.lock /home/joel/Desktop/mir_ws/devel/./cmake.lock
+/home/joel/Desktop/mir_ws/devel/.private/workstation_detector/share/workstation_detector/cmake/workstation_detectorConfig.cmake /home/joel/Desktop/mir_ws/devel/share/workstation_detector/cmake/workstation_detectorConfig.cmake
+/home/joel/Desktop/mir_ws/devel/.private/workstation_detector/share/workstation_detector/cmake/workstation_detectorConfig-version.cmake /home/joel/Desktop/mir_ws/devel/share/workstation_detector/cmake/workstation_detectorConfig-version.cmake
+/home/joel/Desktop/mir_ws/devel/.private/workstation_detector/lib/workstation_detector/workstation_detector.py /home/joel/Desktop/mir_ws/devel/lib/workstation_detector/workstation_detector.py
+/home/joel/Desktop/mir_ws/devel/.private/workstation_detector/lib/workstation_detector/cmake.lock /home/joel/Desktop/mir_ws/devel/lib/workstation_detector/cmake.lock
+/home/joel/Desktop/mir_ws/devel/.private/workstation_detector/lib/workstation_detector/exploration_controller.py /home/joel/Desktop/mir_ws/devel/lib/workstation_detector/exploration_controller.py
+/home/joel/Desktop/mir_ws/devel/.private/workstation_detector/lib/pkgconfig/workstation_detector.pc /home/joel/Desktop/mir_ws/devel/lib/pkgconfig/workstation_detector.pc

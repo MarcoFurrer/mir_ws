@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<launch>
+
+  <!-- 1.  Start the RealSense D455 -->
+  <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+    <arg name="align_depth" value="true"/>
+  </include>
+
+  <!-- 2.  Detect every 6x6‑250 ArUco tag -->
+  <node pkg="aruco_ros"
+        type="marker_publisher"
+        name="aruco_marker_publisher"
+        output="screen">
+
+    <!-- image & camera_info must point to the RealSense colour stream -->
+    <remap from="image"        to="/camera/color/image_raw"/>
+    <remap from="camera_info"  to="/camera/color/camera_info"/>
+
+    <!-- core parameters -->
+    <param name="image_is_rectified"  value="true"/>
+    <param name="aruco_dictionary_id" value="DICT_6X6_250"/>
+    <param name="marker_size"         value="0.17"/>
+
+    <!-- TF setup -->
+    <param name="camera_frame"        value="camera_color_optical_frame"/>
+    <param name="reference_frame"     value="camera_color_optical_frame"/>
+    <param name="publish_tf"          value="true"/>
+
+  </node>
+
+</launch>
+
