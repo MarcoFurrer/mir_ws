@@ -60,8 +60,6 @@ class WorkstationDetector:
 
     def laser_callback(self, msg):
         """Process laser scan data at a controlled rate"""
-        # Simple print to verify callback is being called
-        print("Laser callback triggered!")
         
         current_time = time.time()
         
