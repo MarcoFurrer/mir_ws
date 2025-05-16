@@ -1,205 +1,468 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+
 import rospy
 import numpy as np
-from nav_msgs.msg import OccupancyGrid
-from geometry_msgs.msg import PoseArray, Pose
+import math
+from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker, MarkerArray
-import tf
+from geometry_msgs.msg import Point, PoseStamped
+from std_srvs.srv import Trigger, TriggerResponse
+from std_msgs.msg import Int32
+from tf.transformations import quaternion_from_euler
+import tf2_ros
+import geometry_msgs.msg
+import time
+import cv2
+import matplotlib.pyplot as plt
 
 class WorkstationDetector:
     def __init__(self):
-        rospy.init_node('workstation_detector', anonymous=True)
+        self.rate = rospy.Rate(1)
+        self.processing_interval = 1.0
+        self.last_processed_time = 0
         
-        # Store workstation locations and count
-        self.workstations_detected = []
-        self.workstations_count = 0
+        # Add debug flag for development
+        self.debug = True
+        print("Debug mode enabled - will print laser callback info")
         
-        # Publishers
-        self.workstation_pub = rospy.Publisher('/detected_workstations', PoseArray, queue_size=10)
-        self.marker_pub = rospy.Publisher('/workstation_markers', MarkerArray, queue_size=10)
+        # Add marker publisher for RViz visualization
+        self.marker_pub = rospy.Publisher('detected_lines', MarkerArray, queue_size=10)
         
-        # Subscribers
-        self.static_map_sub = rospy.Subscriber('/map', OccupancyGrid, self.static_map_callback)
-        self.costmap_sub = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.costmap_callback)
+        # Add navigation publisher
+        self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
         
-        # Store maps
-        self.static_map = None
-        self.static_map_data = None
-        self.costmap = None
+        # Add service for navigation
+        self.navigate_srv = rospy.Service('navigate_to_line', Trigger, self.handle_navigate_service)
         
-        rospy.loginfo("Enhanced workstation detector initialized")
-    
-    def static_map_callback(self, map_msg):
-        if self.static_map is None:
-            self.static_map = map_msg
-            self.static_map_data = np.array(map_msg.data).reshape(map_msg.info.height, map_msg.info.width)
-            rospy.loginfo("Static map received")
-    
-    def costmap_callback(self, costmap_msg):
-        if self.static_map is None:
-            return
+        # Add subscriber for line selection
+        self.line_selection_sub = rospy.Subscriber('select_line', Int32, self.handle_line_selection)
         
-        self.costmap = costmap_msg
-        rospy.loginfo("Processing costmap to find workstations")
+        # TF buffer for coordinate transformations
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
         
-        # Process the costmap to find workstations
-        self.find_workstations()
-    
-    def find_workstations(self):
-        if self.static_map is None or self.costmap is None:
+        # Subscribers - try multiple possible scan topics
+        rospy.Subscriber('/scan', LaserScan, self.laser_callback)
+        
+        # Store detected workstations
+        self.workstations = []
+        
+        # Store latest detected lines and selected line
+        self.latest_lines = []
+        self.latest_frame_id = None
+        self.selected_line_index = 0
+        
+        # Create publisher for selected line visualization
+        self.selected_line_pub = rospy.Publisher('selected_line', MarkerArray, queue_size=1)
+        
+        rospy.loginfo("Workstation detector initialized")
+        rospy.loginfo("Processing scans every %.1f seconds", self.processing_interval)
+
+    def laser_callback(self, msg):
+        """Process laser scan data at a controlled rate"""
+        
+        current_time = time.time()
+        
+        # Only process scans at the specified interval
+        if current_time - self.last_processed_time < self.processing_interval:
             return
             
-        # Convert costmap to numpy array
-        costmap_data = np.array(self.costmap.data).reshape(self.costmap.info.height, self.costmap.info.width)
+        self.last_processed_time = current_time
         
-        # Different resolution and origin? We need to align the maps
-        # This is simplified - you may need more complex transformation if maps have different origins/resolutions
-        if (self.costmap.info.resolution != self.static_map.info.resolution or
-            self.costmap.info.origin.position.x != self.static_map.info.origin.position.x or
-            self.costmap.info.origin.position.y != self.static_map.info.origin.position.y):
-            rospy.logwarn("Maps have different resolutions or origins - will attempt basic alignment")
+        print(f"Processing scan message from topic: {msg._connection_header['topic']}")
+        print(f"Scan contains {len(msg.ranges)} points")
         
-        # Find occupied cells in costmap that are free in static map
-        # 0 in static map means free space
-        # >0 in costmap means occupied or inflation
-        # Let's consider cells with costmap value > 65 as potential obstacles (you may need to adjust this threshold)
-        obstacle_threshold = 65  # Adjust based on your costmap values
+        # Process the laser scan to get points
+        points = self.process_laser_scan(msg)
         
-        # Lists to store candidate points
-        candidate_x = []
-        candidate_y = []
+        rospy.loginfo("\n--- Processing scan with %d valid points from %s ---", 
+                     len(points), msg.header.frame_id)
         
-        # Iterate through the costmap
-        for y in range(costmap_data.shape[0]):
-            for x in range(costmap_data.shape[1]):
-                # Check if this point is within static map bounds
-                static_x = int((x * self.costmap.info.resolution + self.costmap.info.origin.position.x - 
-                               self.static_map.info.origin.position.x) / self.static_map.info.resolution)
-                static_y = int((y * self.costmap.info.resolution + self.costmap.info.origin.position.y - 
-                               self.static_map.info.origin.position.y) / self.static_map.info.resolution)
+        # Basic scan statistics
+        if points:
+            distances = [math.sqrt(p[0]**2 + p[1]**2) for p in points]
+            min_dist = min(distances)
+            max_dist = max(distances)
+            avg_dist = sum(distances) / len(distances)
+            rospy.loginfo("Scan statistics: min=%.2fm, max=%.2fm, avg=%.2fm",
+                         min_dist, max_dist, avg_dist)
+            
+            # Detect lines using Hough transform
+            lines = self.detect_lines_hough(points, frame_id=msg.header.frame_id)
+            if lines:
+                rospy.loginfo(f"Detected {len(lines)} lines in the scan")
+
+    def detect_lines_hough(self, points, rho=0.05, theta=np.pi/180, 
+                       threshold=10, min_line_length=0.3, max_line_gap=0.2, frame_id='base_link'):
+        """
+        Detect lines in laser scan data using Hough Transform
+        
+        Args:
+            points: List of (x, y) points
+            rho: Distance resolution of the accumulator in meters
+            theta: Angle resolution of the accumulator in radians
+            threshold: Minimum number of intersections to detect a line
+            min_line_length: Minimum line length in meters
+            max_line_gap: Maximum gap between points on the same line in meters
+            frame_id: Frame ID of the laser scan for visualization
+            
+        Returns:
+            List of detected lines as (rho, theta) pairs
+        """
+        if not points or len(points) < threshold:
+            print("Not enough points for line detection")
+            return []
+        
+        # Convert points to numpy array
+        points_array = np.array(points)
+        
+        # Find min and max coordinates to determine scale
+        min_x, min_y = np.min(points_array, axis=0) - 0.5
+        max_x, max_y = np.max(points_array, axis=0) + 0.5
+        
+        # Define scaling to convert from meters to pixels
+        # Use a reasonable resolution (1 pixel = 1cm)
+        pixels_per_meter = 100
+        img_width = int((max_x - min_x) * pixels_per_meter)
+        img_height = int((max_y - min_y) * pixels_per_meter)
+        
+        # Create blank image
+        img = np.zeros((img_height, img_width), dtype=np.uint8)
+        
+        # Map points to image coordinates
+        for x, y in points:
+            px = int((x - min_x) * pixels_per_meter)
+            py = int((y - min_y) * pixels_per_meter)
+            
+            # Ensure point is within image bounds
+            if 0 <= px < img_width and 0 <= py < img_height:
+                img[py, px] = 255
+        
+        # Apply Hough Transform
+        lines = cv2.HoughLinesP(
+            img, 
+            rho=rho * pixels_per_meter,
+            theta=theta,
+            threshold=threshold,
+            minLineLength=int(min_line_length * pixels_per_meter),
+            maxLineGap=int(max_line_gap * pixels_per_meter)
+        )
+        
+        detected_lines = []
+        
+        if lines is not None:
+            print(f"Hough Transform detected {len(lines)} line segments")
+            
+            # Process each line
+            for line in lines:
+                x1, y1, x2, y2 = line[0]
                 
-                if (0 <= static_x < self.static_map.info.width and 
-                    0 <= static_y < self.static_map.info.height):
-                    
-                    # Get values from both maps
-                    static_value = self.static_map_data[static_y, static_x]
-                    costmap_value = costmap_data[y, x]
-                    
-                    # If free in static map but obstacle in costmap
-                    if static_value == 0 and costmap_value > obstacle_threshold:
-                        # Convert to world coordinates
-                        world_x = x * self.costmap.info.resolution + self.costmap.info.origin.position.x
-                        world_y = y * self.costmap.info.resolution + self.costmap.info.origin.position.y
-                        candidate_x.append(world_x)
-                        candidate_y.append(world_y)
-        
-        # Now cluster these points to find distinct workstations
-        self.cluster_workstations(candidate_x, candidate_y)
-    
-    def cluster_workstations(self, x_points, y_points):
-        if len(x_points) == 0:
-            return
-            
-        rospy.loginfo(f"Found {len(x_points)} candidate points, clustering...")
-        
-        # Simple clustering by distance
-        clusters = []
-        min_distance = 0.5  # Minimum distance between clusters (meters)
-        
-        for i in range(len(x_points)):
-            x, y = x_points[i], y_points[i]
-            
-            # Check if this point belongs to an existing cluster
-            found_cluster = False
-            for cluster in clusters:
-                # Calculate distance to cluster center
-                cx = sum(cluster[0]) / len(cluster[0])
-                cy = sum(cluster[1]) / len(cluster[1])
-                distance = np.sqrt((x - cx)**2 + (y - cy)**2)
+                # Convert back to meters
+                x1_m = (x1 / pixels_per_meter) + min_x
+                y1_m = (y1 / pixels_per_meter) + min_y
+                x2_m = (x2 / pixels_per_meter) + min_x
+                y2_m = (y2 / pixels_per_meter) + min_y
                 
-                if distance < min_distance:
-                    # Add to existing cluster
-                    cluster[0].append(x)
-                    cluster[1].append(y)
-                    found_cluster = True
-                    break
+                # Calculate line length
+                length = np.sqrt((x2_m - x1_m)**2 + (y2_m - y1_m)**2)
+                
+                # Calculate line angle (in degrees)
+                angle = np.degrees(np.arctan2(y2_m - y1_m, x2_m - x1_m))
+                
+                # Store line parameters
+                detected_line = {
+                    'start': (x1_m, y1_m),
+                    'end': (x2_m, y2_m),
+                    'length': length,
+                    'angle': angle
+                }
+                
+                detected_lines.append(detected_line)
+                print(f"Line detected: length={length:.2f}m, angle={angle:.1f}°")
             
-            if not found_cluster:
-                # Create new cluster
-                clusters.append([[x], [y]])
-        
-        # Filter clusters by size - we want substantial objects
-        min_points = 5  # Minimum number of points to be considered a workstation
-        valid_clusters = [c for c in clusters if len(c[0]) >= min_points]
-        
-        # Save each cluster as a workstation
-        self.workstations_detected = []
-        for cluster in valid_clusters:
-            # Calculate the center of the cluster
-            cx = sum(cluster[0]) / len(cluster[0])
-            cy = sum(cluster[1]) / len(cluster[1])
+            # Store the latest detected lines for navigation
+            self.latest_lines = detected_lines
+            self.latest_frame_id = frame_id
             
-            # Create a pose for this workstation
-            pose = Pose()
-            pose.position.x = cx
-            pose.position.y = cy
-            pose.position.z = 0.0
-            pose.orientation.w = 1.0  # Default orientation
+            # Publish markers for RViz visualization
+            self.publish_line_markers(detected_lines, frame_id)
             
-            self.workstations_detected.append(pose)
+            # Highlight selected line if any
+            if self.selected_line_index < len(detected_lines):
+                self.highlight_selected_line()
         
-        # Limit to 4 workstations (the largest ones)
-        if len(self.workstations_detected) > 4:
-            # TODO: Use a better metric than just taking the first 4
-            self.workstations_detected = self.workstations_detected[:4]
+        return detected_lines
+
+    def publish_line_markers(self, lines, frame_id):
+        """
+        Publish detected lines as RViz markers
         
-        self.workstations_count = len(self.workstations_detected)
-        rospy.loginfo(f"Found {self.workstations_count} workstations")
-        
-        # Publish workstations
-        self.publish_workstations()
-    
-    def publish_workstations(self):
-        # Publish PoseArray
-        msg = PoseArray()
-        msg.header.stamp = rospy.Time.now()
-        msg.header.frame_id = "map"
-        msg.poses = self.workstations_detected
-        self.workstation_pub.publish(msg)
-        
-        # Publish markers for visualization
+        Args:
+            lines: List of detected lines
+            frame_id: Frame ID from the laser scan
+        """
         marker_array = MarkerArray()
         
-        for i, workstation in enumerate(self.workstations_detected):
-            marker = Marker()
-            marker.header.frame_id = "map"
-            marker.header.stamp = rospy.Time.now()
-            marker.ns = "workstations"
-            marker.id = i
-            marker.type = Marker.CUBE
-            marker.action = Marker.ADD
-            marker.pose = workstation
-            
-            # Set size (adjust as needed for your workstations)
-            marker.scale.x = 0.5
-            marker.scale.y = 0.5
-            marker.scale.z = 0.5
-            
-            # Set color (green)
-            marker.color.r = 0.0
-            marker.color.g = 1.0
-            marker.color.b = 0.0
-            marker.color.a = 0.7
-            
-            marker.lifetime = rospy.Duration(0)  # Persistent
-            
-            marker_array.markers.append(marker)
+        # Use current time for all markers to prevent "too old" errors
+        current_time = rospy.Time.now()
         
+        # Delete previous markers
+        delete_marker = Marker()
+        delete_marker.header.stamp = current_time
+        delete_marker.header.frame_id = frame_id
+        delete_marker.action = Marker.DELETEALL
+        marker_array.markers.append(delete_marker)
+        
+        # Create a marker for each line
+        for i, line in enumerate(lines):
+            marker = Marker()
+            marker.header.frame_id = frame_id
+            marker.header.stamp = current_time  # Use current time for all markers
+            marker.ns = "detected_lines"
+            marker.id = i
+            marker.type = Marker.LINE_STRIP
+            marker.action = Marker.ADD
+            
+            # Add a lifetime to the marker
+            marker.lifetime = rospy.Duration(1.0)  # Display for 1 second
+            
+            # Set line properties
+            marker.scale.x = 0.05  # Line width
+            
+            # Color based on line angle for better visualization
+            angle = line['angle'] % 180
+            # Use HSV color space for smooth color transitions
+            # Map angle 0-180 to hue 0-1
+            hue = angle / 180.0
+            # Convert to RGB (simplified conversion)
+            if hue < 1/6:
+                marker.color.r = 1.0
+                marker.color.g = hue * 6
+                marker.color.b = 0.0
+            elif hue < 2/6:
+                marker.color.r = (2/6 - hue) * 6
+                marker.color.g = 1.0
+                marker.color.b = 0.0
+            elif hue < 3/6:
+                marker.color.r = 0.0
+                marker.color.g = 1.0
+                marker.color.b = (hue - 2/6) * 6
+            elif hue < 4/6:
+                marker.color.r = 0.0
+                marker.color.g = (4/6 - hue) * 6
+                marker.color.b = 1.0
+            elif hue < 5/6:
+                marker.color.r = (hue - 4/6) * 6
+                marker.color.g = 0.0
+                marker.color.b = 1.0
+            else:
+                marker.color.r = 1.0
+                marker.color.g = 0.0
+                marker.color.b = (1.0 - hue) * 6
+                
+            marker.color.a = 1.0  # Full opacity
+            
+            # Set line endpoints
+            start_point = Point()
+            start_point.x = line['start'][0]
+            start_point.y = line['start'][1]
+            start_point.z = 0.0
+            
+            end_point = Point()
+            end_point.x = line['end'][0]
+            end_point.y = line['end'][1]
+            end_point.z = 0.0
+            
+            marker.points.append(start_point)
+            marker.points.append(end_point)
+            
+            # Add to marker array
+            marker_array.markers.append(marker)
+            
+        # Publish the marker array
         self.marker_pub.publish(marker_array)
+        print(f"Published {len(lines)} line markers to RViz")
+
+    def process_laser_scan(self, msg):
+        """
+        Process the laser scan message and return valid points
+        """
+        print("Processing laser scan...")
+        # Extract ranges and angles
+        ranges = np.array(msg.ranges)
+        angles = np.linspace(msg.angle_min, msg.angle_max, len(ranges))
+        
+        # Filter out invalid readings
+        valid_indices = np.logical_and(
+            ranges > msg.range_min, 
+            ranges < msg.range_max
+        )
+        valid_ranges = ranges[valid_indices]
+        valid_angles = angles[valid_indices]
+        
+        # Convert to Cartesian coordinates
+        x_points = valid_ranges * np.cos(valid_angles)
+        y_points = valid_ranges * np.sin(valid_angles)
+        
+        print(f"Found {len(x_points)} valid points")
+        return list(zip(x_points, y_points))
+    
+    def handle_line_selection(self, msg):
+        """Handle selection of line by index"""
+        line_index = msg.data
+        if not self.latest_lines:
+            rospy.logwarn("No lines detected yet, cannot select line %d", line_index)
+            return
+        
+        if line_index >= len(self.latest_lines):
+            rospy.logwarn(f"Line index {line_index} is out of range. Only {len(self.latest_lines)} lines detected.")
+            return
+            
+        self.selected_line_index = line_index
+        selected_line = self.latest_lines[line_index]
+        rospy.loginfo(f"Selected line {line_index}: length={selected_line['length']:.2f}m, angle={selected_line['angle']:.1f}°")
+        
+        # Highlight the selected line
+        self.highlight_selected_line()
+
+    def handle_navigate_service(self, req):
+        """Handle service request to navigate to the currently selected line"""
+        success = self.navigate_to_line(self.selected_line_index)
+        response = TriggerResponse()
+        response.success = success
+        if success:
+            response.message = f"Navigating to line {self.selected_line_index}"
+        else:
+            response.message = "Navigation failed"
+        return response
+
+    def navigate_to_line(self, line_index=None, distance_from_line=0.7):
+        """
+        Navigate to a position in front of a detected line
+        
+        Args:
+            line_index: Index of the line to navigate to (default: use selected_line_index)
+            distance_from_line: How far from the line to position the robot (meters)
+        
+        Returns:
+            True if navigation command was sent successfully, False otherwise
+        """
+        if line_index is None:
+            line_index = self.selected_line_index
+            
+        # Check if we have lines detected
+        if not self.latest_lines:
+            rospy.logwarn("No lines detected yet, cannot navigate")
+            return False
+            
+        # Check if requested line exists
+        if line_index >= len(self.latest_lines):
+            rospy.logwarn(f"Line index {line_index} is out of range. Only {len(self.latest_lines)} lines detected.")
+            return False
+        
+        # Get the target line
+        target_line = self.latest_lines[line_index]
+        
+        # Calculate midpoint of the line
+        line_start = np.array(target_line['start'])
+        line_end = np.array(target_line['end'])
+        line_midpoint = (line_start + line_end) / 2.0
+        
+        # Calculate line direction vector
+        line_direction = line_end - line_start
+        line_length = np.linalg.norm(line_direction)
+        
+        if line_length < 0.01:  # Avoid division by zero
+            rospy.logwarn("Line is too short for navigation")
+            return False
+            
+        # Normalize line direction
+        line_direction = line_direction / line_length
+        
+        # Calculate normal vector to the line (perpendicular)
+        # Rotate 90 degrees counter-clockwise
+        line_normal = np.array([-line_direction[1], line_direction[0]])
+        
+        # Position in front of the line
+        # We want the robot to face the line, so we place it along the normal vector
+        target_position = line_midpoint + line_normal * distance_from_line
+        
+        # Robot should face the line
+        target_orientation = math.atan2(-line_normal[1], -line_normal[0])
+        
+        rospy.loginfo(f"Navigating to line {line_index}: position=[{target_position[0]:.2f}, {target_position[1]:.2f}], " +
+                     f"orientation={math.degrees(target_orientation):.1f}°")
+        
+        # Create goal directly in the laser frame
+        goal = PoseStamped()
+        goal.header.frame_id = self.latest_frame_id
+        goal.header.stamp = rospy.Time.now()
+        
+        goal.pose.position.x = float(target_position[0])
+        goal.pose.position.y = float(target_position[1])
+        goal.pose.position.z = 0.0
+        
+        # Convert euler angle to quaternion
+        quaternion = quaternion_from_euler(0, 0, target_orientation)
+        goal.pose.orientation.x = quaternion[0]
+        goal.pose.orientation.y = quaternion[1]
+        goal.pose.orientation.z = quaternion[2]
+        goal.pose.orientation.w = quaternion[3]
+        
+        # Publish the goal
+        self.goal_pub.publish(goal)
+        rospy.loginfo(f"Navigation goal published in {self.latest_frame_id} frame")
+        
+        return True
+        
+    def highlight_selected_line(self):
+        """Publish a special marker for the currently selected line"""
+        if not self.latest_lines or self.selected_line_index >= len(self.latest_lines):
+            return
+            
+        marker = Marker()
+        marker.header.frame_id = self.latest_frame_id
+        marker.header.stamp = rospy.Time.now()
+        marker.ns = "selected_line"
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD
+        marker.lifetime = rospy.Duration(1.0)
+        
+        # Make the selected line thicker and yellow
+        marker.scale.x = 0.1  # Thicker line
+        marker.color.r = 1.0
+        marker.color.g = 1.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+        
+        # Get line points
+        line = self.latest_lines[self.selected_line_index]
+        start_point = Point()
+        start_point.x = line['start'][0]
+        start_point.y = line['start'][1]
+        start_point.z = 0.0
+        
+        end_point = Point()
+        end_point.x = line['end'][0]
+        end_point.y = line['end'][1]
+        end_point.z = 0.0
+        
+        marker.points.append(start_point)
+        marker.points.append(end_point)
+        
+        # Create a marker array with just this marker
+        marker_array = MarkerArray()
+        marker_array.markers.append(marker)
+        
+        # Publish to the selected line topic
+        self.selected_line_pub.publish(marker_array)
+
 
 if __name__ == '__main__':
     try:
         detector = WorkstationDetector()
+        rospy.loginfo("Workstation detector running. Press Ctrl+C to stop.")
         rospy.spin()
     except rospy.ROSInterruptException:
         pass

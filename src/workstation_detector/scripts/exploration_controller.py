@@ -6,20 +6,24 @@ from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import PoseArray, PoseStamped
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from visualization_msgs.msg import Marker, MarkerArray
+import tf
+import math
 
 class ExplorationController:
     def __init__(self):
         rospy.init_node('exploration_controller')
         
-        # Track found workstations
-        self.workstations = []
-        self.workstations_found = 0
-        self.target_workstations = 4
+        # Track found machines
+        self.machines = []
+        self.machines_found = 0
+        self.machine_visited = []  # Keep track of which machines we've visited
+        self.target_machines = 4  # Target number of machines to find
         
         # Store frontier points to explore
         self.frontier_points = []
         self.current_goal = None
         self.exploring = False
+        self.current_state = "EXPLORING"  # States: EXPLORING, VISITING_MACHINE, DONE
         
         # Move base client
         self.move_base_client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
@@ -43,22 +47,30 @@ class ExplorationController:
         self.main_loop()
         
     def workstations_callback(self, workstations_msg):
-        self.workstations = workstations_msg.poses
-        self.workstations_found = len(workstations_msg.poses)
+        self.machines = workstations_msg.poses
+        new_count = len(workstations_msg.poses)
         
-        rospy.loginfo(f"Workstations updated: {self.workstations_found}/{self.target_workstations}")
+        # If we found new machines, update our records
+        if new_count > self.machines_found:
+            rospy.loginfo(f"New machines detected! Now at {new_count}/{self.target_machines}")
+            # Initialize visited status for any new machines
+            while len(self.machine_visited) < new_count:
+                self.machine_visited.append(False)
+                
+        self.machines_found = new_count
         
-        # If we found all workstations, we can stop exploring
-        if self.workstations_found >= self.target_workstations:
-            rospy.loginfo("All workstations found! Exploration complete.")
+        # If we found all machines and we're exploring, switch to visiting them
+        if self.machines_found >= self.target_machines and self.current_state == "EXPLORING":
+            rospy.loginfo("All machines found! Switching to machine visit mode.")
             # Cancel current goal if exploring
             if self.exploring and self.current_goal is not None:
                 self.move_base_client.cancel_goal()
                 self.exploring = False
+            self.current_state = "VISITING_MACHINE"
             
     def map_callback(self, map_data):
         # Calculate exploration frontiers based on the map
-        if not self.exploring and self.workstations_found < self.target_workstations:
+        if self.current_state == "EXPLORING" and not self.exploring:
             self.calculate_frontiers(map_data)
     
     def calculate_frontiers(self, map_data):
@@ -144,19 +156,61 @@ class ExplorationController:
         # A better strategy would choose based on distance, information gain, etc.
         return random.choice(self.frontier_points)
     
+    def select_next_unvisited_machine(self):
+        """Select the next machine that hasn't been visited yet"""
+        for i in range(len(self.machines)):
+            if not self.machine_visited[i]:
+                return i
+        return None  # All machines visited
+    
     def main_loop(self):
-        """Main control loop for exploration"""
-        while not rospy.is_shutdown() and self.workstations_found < self.target_workstations:
-            if not self.exploring:
-                # Choose a frontier and navigate to it
-                frontier = self.select_next_frontier()
-                
-                if frontier:
-                    rospy.loginfo(f"Moving to frontier at {frontier}")
-                    self.navigate_to_point(frontier[0], frontier[1])
-                    self.exploring = True
-                else:
-                    rospy.loginfo("No frontiers found. Waiting for map updates.")
+        """Main control loop for exploration and machine visiting"""
+        while not rospy.is_shutdown():
+            if self.current_state == "EXPLORING":
+                # Exploration state - find frontiers and navigate to them
+                if not self.exploring:
+                    frontier = self.select_next_frontier()
+                    
+                    if frontier:
+                        rospy.loginfo(f"Moving to frontier at {frontier}")
+                        self.navigate_to_point(frontier[0], frontier[1])
+                        self.exploring = True
+                    else:
+                        rospy.loginfo("No frontiers found. Waiting for map updates.")
+            
+            elif self.current_state == "VISITING_MACHINE":
+                # Visit each machine in turn
+                if not self.exploring:
+                    next_machine = self.select_next_unvisited_machine()
+                    
+                    if next_machine is not None:
+                        machine_pose = self.machines[next_machine]
+                        rospy.loginfo(f"Moving to machine {next_machine} at position ({machine_pose.position.x}, {machine_pose.position.y})")
+                        
+                        # Calculate approach position (offset from machine center)
+                        # Get orientation as Euler angles
+                        orientation = machine_pose.orientation
+                        quaternion = (orientation.x, orientation.y, orientation.z, orientation.w)
+                        euler = tf.transformations.euler_from_quaternion(quaternion)
+                        yaw = euler[2]
+                        
+                        # Calculate approach position (1 meter away from machine in the opposite direction of its orientation)
+                        approach_distance = 1.0
+                        approach_x = machine_pose.position.x - approach_distance * math.cos(yaw)
+                        approach_y = machine_pose.position.y - approach_distance * math.sin(yaw)
+                        
+                        # Navigate to approach position
+                        self.navigate_to_point(approach_x, approach_y)
+                        self.exploring = True
+                        self.machine_visited[next_machine] = True
+                    else:
+                        rospy.loginfo("All machines have been visited!")
+                        self.current_state = "DONE"
+            
+            elif self.current_state == "DONE":
+                rospy.loginfo("Exploration and machine visiting complete.")
+                # Maybe add some final behavior here
+                break
             
             self.rate.sleep()
     
@@ -183,8 +237,8 @@ class ExplorationController:
         self.exploring = False
         self.current_goal = None
         
-        # Continue exploration in the next loop iteration
-        rospy.loginfo("Completed navigation goal, planning next move")
+        # Continue in the next loop iteration
+        rospy.loginfo(f"Completed navigation goal, current state: {self.current_state}")
 
 if __name__ == '__main__':
     try:

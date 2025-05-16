@@ -1,0 +1,9 @@
+<launch>
+    <!-- Launch the workstation detector node -->
+    <node name="workstation_detector" pkg="workstation_detector" type="workstation_detector.py" output="screen">
+        <param name="processing_interval" value="1.0" />
+    </node>
+    
+    <!-- Launch RViz with line detection visualization -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find rviz)/default.rviz" />
+</launch>

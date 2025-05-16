@@ -1,0 +1,73 @@
+<launch>
+    <!-- Load the map using an absolute path to ensure the correct map is loaded -->
+    <arg name="map_file" default="$(env HOME)/mir_ws/map/game_s12.yaml"/>
+    <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)" respawn="false" />
+
+    <!-- Initial pose parameters -->
+    <arg name="initial_pose_x" default="0.0"/>
+    <arg name="initial_pose_y" default="0.0"/>
+    <arg name="initial_pose_a" default="0.0"/>
+    
+    <!-- Run AMCL for localization -->
+    <node pkg="amcl" type="amcl" name="amcl" output="screen">
+        <!-- Initial pose -->
+        <param name="initial_pose_x" value="$(arg initial_pose_x)"/>
+        <param name="initial_pose_y" value="$(arg initial_pose_y)"/>
+        <param name="initial_pose_a" value="$(arg initial_pose_a)"/>
+        
+        <!-- AMCL parameters -->
+        <param name="odom_frame_id" value="odom"/>
+        <param name="base_frame_id" value="base_link"/>
+        <param name="global_frame_id" value="map"/>
+        <param name="odom_model_type" value="diff"/>
+        <param name="transform_tolerance" value="0.2"/>
+        <param name="gui_publish_rate" value="5.0"/>
+        <param name="laser_max_beams" value="30"/>
+        <param name="laser_max_range" value="8.0"/>
+        <param name="min_particles" value="500"/>
+        <param name="max_particles" value="5000"/>
+        <param name="kld_err" value="0.05"/>
+        <param name="kld_z" value="0.99"/>
+        <param name="update_min_d" value="0.1"/>
+        <param name="update_min_a" value="0.2"/>
+        <param name="resample_interval" value="1"/>
+        <param name="recovery_alpha_slow" value="0.0"/>
+        <param name="recovery_alpha_fast" value="0.0"/>
+    </node>
+    
+    <!-- Publish static transform from base_link to laser -->
+    <node pkg="tf" type="static_transform_publisher" name="base_to_laser" 
+          args="0 0 0 0 0 0 base_link laser 100" />
+    
+    <!-- Use a basic move_base setup directly -->
+    <node pkg="move_base" type="move_base" name="move_base" output="screen">
+        <!-- Basic configuration for move_base -->
+        <param name="controller_frequency" value="5.0"/>
+        <param name="controller_patience" value="15.0"/>
+        <param name="planner_frequency" value="1.0"/>
+        <param name="planner_patience" value="5.0"/>
+        <param name="oscillation_timeout" value="10.0"/>
+        <param name="oscillation_distance" value="0.2"/>
+        
+        <!-- Load global costmap params -->
+        <rosparam file="$(find workstation_detector)/config/global_costmap_params.yaml" command="load" />
+        <!-- Load local costmap params -->
+        <rosparam file="$(find workstation_detector)/config/local_costmap_params.yaml" command="load" />
+        <!-- Load common costmap params -->
+        <rosparam file="$(find workstation_detector)/config/costmap_common_params.yaml" command="load" ns="global_costmap" />
+        <rosparam file="$(find workstation_detector)/config/costmap_common_params.yaml" command="load" ns="local_costmap" />
+    </node>
+    
+    <!-- Machine detection node -->
+    <node name="machine_detector" pkg="workstation_detector" type="workstation_detector.py" output="screen" />
+    
+    <!-- Exploration controller -->
+    <node name="exploration_controller" pkg="workstation_detector" type="exploration_controller.py" output="screen" />
+    
+    <!-- Set initial pose using a simple script instead of complex XML -->
+    <node pkg="rostopic" type="rostopic" name="publish_initial_pose" 
+          args="pub -1 /initialpose geometry_msgs/PoseWithCovarianceStamped '{header: {frame_id: map}, pose: {pose: {position: {x: $(arg initial_pose_x), y: $(arg initial_pose_y)}, orientation: {w: 1.0}}, covariance: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.06853]}}'" />
+    
+    <!-- RViz for visualization -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find workstation_detector)/rviz/machine_exploration.rviz" />
+</launch>

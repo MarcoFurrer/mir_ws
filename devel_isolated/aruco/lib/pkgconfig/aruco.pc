@@ -1,8 +1,0 @@
-prefix=/home/joel/Desktop/mir_ws/devel_isolated/aruco
-
-Name: aruco
-Description: Description of aruco
-Version: 2.2.3
-Cflags: -I/home/joel/Desktop/mir_ws/src/aruco/include
-Libs: -L${prefix}/lib -laruco
-Requires: 

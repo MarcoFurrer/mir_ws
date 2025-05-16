@@ -1,8 +1,0 @@
-prefix=/home/joel/Desktop/mir_ws/install_isolated
-
-Name: aruco
-Description: Description of aruco
-Version: 2.2.3
-Cflags: -I${prefix}/include
-Libs: -L${prefix}/lib -laruco
-Requires: 

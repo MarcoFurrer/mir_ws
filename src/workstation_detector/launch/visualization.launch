@@ -1,0 +1,22 @@
+<launch>
+    <!-- This launch file only starts RViz for visualization of laser data, robot model and clusters -->
+    
+    <!-- Load the robot description parameter -->
+    <param name="robot_description" command="$(find xacro)/xacro '$(find mir_description)/urdf/mir.urdf.xacro'" />
+    
+    <!-- Start robot state publisher to publish TF transforms -->
+    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />
+    
+    <!-- Start joint state publisher -->
+    <node name="joint_state_publisher" pkg="joint_state_publisher" type="joint_state_publisher">
+        <param name="use_gui" value="false"/>
+    </node>
+    
+    <!-- Start the workstation detector node to publish visualization markers -->
+    <node name="workstation_detector" pkg="workstation_detector" type="workstation_detector.py" output="screen">
+        <!-- Optional parameters could be added here -->
+    </node>
+    
+    <!-- Start RViz with our custom configuration -->
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find workstation_detector)/rviz/cluster_visualization.rviz" required="true" />
+</launch>

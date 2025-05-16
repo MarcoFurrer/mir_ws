@@ -1,8 +1,0 @@
-prefix=/home/joel/Desktop/mir_ws/devel_isolated/mir_msgs
-
-Name: mir_msgs
-Description: Description of mir_msgs
-Version: 1.1.7
-Cflags: -I/home/joel/Desktop/mir_ws/devel_isolated/mir_msgs/include
-Libs: -L${prefix}/lib 
-Requires: geometry_msgs message_runtime
