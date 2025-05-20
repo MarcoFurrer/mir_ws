@@ -6,85 +6,65 @@ import os
 import time
 import math
 import numpy as np
-from geometry_msgs.msg import PoseStamped, Twist, Point
-from tf.transformations import quaternion_from_euler
+from geometry_msgs.msg import PoseStamped, Twist, Point, PoseArray
+from tf.transformations import quaternion_from_euler, euler_from_quaternion
 from visualization_msgs.msg import Marker, MarkerArray
 
-# Add the directory of this script to the Python path to import WorkstationDetector
+# Add the directory of this script to the Python path
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(script_dir)
 
-# Import the WorkstationDetector class
-from workstation_detector import WorkstationDetector
-from navigate_to_line_with_cmd_vel import navigate_to_line_with_cmd_vel
+# Import the navigation helper and TSP solver
+from navigate_to_line_with_cmd_vel import navigate_to_pose_with_cmd_vel
 from tsp import TSP
 
-def get_line_midpoints(lines):
+# Global variable to store received goal poses
+workstation_goal_poses = None
+workstation_frame_id = None
+
+def workstation_poses_callback(msg):
     """
-    Extract midpoints from detected lines for TSP calculation
-    Args:
-        lines: List of detected lines from WorkstationDetector
-    Returns:
-        List of (x, y) midpoint coordinates
-    """
-    midpoints = []
-    for line in lines:
-        start = np.array(line['start'])
-        end = np.array(line['end'])
-        midpoint = (start + end) / 2
-        midpoints.append((float(midpoint[0]), float(midpoint[1])))
-    
-    return midpoints
-    
-def filter_lines(lines, min_length=0.4, max_length=2.0):
-    """
-    Filter out lines that are likely walls based on length
+    Callback for receiving workstation goal poses
     
     Args:
-        lines: List of detected lines
-        min_length: Minimum line length to consider
-        max_length: Maximum line length to consider (walls are often longer)
-        
-    Returns:
-        List of lines that are likely workstations (not walls)
+        msg: PoseArray message containing goal poses for workstations
     """
-    filtered_lines = []
-    for line in lines:
-        # Filter based on length
-        if min_length <= line['length'] <= max_length:
-            # Additional filtering based on angle - avoid lines too close to cardinal directions
-            angle = line['angle'] % 180
-            angle_tolerance = 5
-            # Skip lines that are aligned with walls (approximately 0°, 90°, or 180°)
-            if (angle < angle_tolerance or
-                abs(angle - 90) < angle_tolerance or
-                abs(angle - 180) < angle_tolerance):
-                rospy.loginfo(f"Skipping potential wall with angle {angle:.1f}° and length {line['length']:.2f}m")
-                continue
-                
-            filtered_lines.append(line)
-            
-    rospy.loginfo(f"Filtered {len(lines)} lines to {len(filtered_lines)} potential workstations")
-    return filtered_lines
+    global workstation_goal_poses, workstation_frame_id
+    workstation_goal_poses = msg.poses
+    workstation_frame_id = msg.header.frame_id
+    rospy.loginfo(f"Received {len(workstation_goal_poses)} workstation goal poses")
+
+def get_pose_positions(poses):
+    """
+    Extract position coordinates from a list of poses for TSP calculation
+    
+    Args:
+        poses: List of geometry_msgs/Pose
+    Returns:
+        List of (x, y) position coordinates
+    """
+    positions = []
+    for pose in poses:
+        positions.append((float(pose.position.x), float(pose.position.y)))
+    
+    return positions
+    
 
 def main():
     rospy.init_node('navigate_with_tsp')
     rate = rospy.Rate(5)  # 5 Hz check rate
     
     # Get parameters from ROS parameter server with defaults
-    min_line_length = rospy.get_param('~min_line_length', 0.4)
-    max_line_length = rospy.get_param('~max_line_length', 1.5)
     max_wait_time = rospy.get_param('~wait_time', 15)
     min_wait_time = rospy.get_param('~min_wait_time', 5)
     
     rospy.loginfo(f"Starting TSP navigation with parameters:")
-    rospy.loginfo(f"  - Minimum line length: {min_line_length}m")
-    rospy.loginfo(f"  - Maximum line length: {max_line_length}m") 
     rospy.loginfo(f"  - Maximum wait time: {max_wait_time}s")
     rospy.loginfo(f"  - Minimum wait time: {min_wait_time}s")
     
-    rospy.loginfo("Starting WorkstationDetector...")
-    detector = WorkstationDetector()
+    # Subscribe to workstation goal poses from WorkstationDetector
+    rospy.Subscriber('workstation_goal_poses', PoseArray, workstation_poses_callback)
+    rospy.loginfo("Waiting for workstation goal poses to be published...")
     
     # Test basic movement to ensure velocity commands work
     rospy.loginfo("Testing basic robot movement...")
@@ -120,16 +100,14 @@ def main():
     rospy.sleep(1.0)
     
     # Continue with regular execution
-    rospy.loginfo("Basic movement test complete. Starting line detection...")
+    rospy.loginfo("Basic movement test complete. Waiting for workstation poses...")
     
-    # Wait for lines to be detected
+    # Wait for goal poses to be received
     wait_count = 0
     
-    rospy.loginfo("Waiting for lines to be detected...")
-    
     while not rospy.is_shutdown() and wait_count < max_wait_time:
-        if hasattr(detector, 'latest_lines') and detector.latest_lines:
-            rospy.loginfo(f"Detected {len(detector.latest_lines)} lines")
+        if workstation_goal_poses is not None and len(workstation_goal_poses) > 0:
+            rospy.loginfo(f"Received {len(workstation_goal_poses)} goal poses")
             if wait_count < min_wait_time:  # Always wait at least minimum time to get more scans
                 rospy.loginfo("Waiting for more scans...")
             else:
@@ -139,105 +117,78 @@ def main():
         wait_count += 1
         rospy.loginfo(f"Waiting... {wait_count}/{max_wait_time} seconds")
     
-    # Check if lines were detected
-    if not hasattr(detector, 'latest_lines') or not detector.latest_lines:
-        rospy.logerr("No lines detected within the timeout period. Exiting.")
+    # Check if goal poses were received
+    if workstation_goal_poses is None or len(workstation_goal_poses) == 0:
+        rospy.logerr("No workstation goal poses received within the timeout period. Exiting.")
         return
     
-    # Get lines information and filter out walls
-    all_lines = detector.latest_lines
-    lines = filter_lines(all_lines, min_length=min_line_length, max_length=max_line_length)
+    # Publish visualization markers for goal poses
+    marker_pub = rospy.Publisher('tsp_goal_poses', MarkerArray, queue_size=10)
     
-    # Publish visualization markers for walls vs. workstations
-    marker_pub = rospy.Publisher('filtered_workstations', MarkerArray, queue_size=10)
-    
-    # Create visualization of filtered workstations (green) vs walls (red)
+    # Create visualization of goal poses
     try:
         marker_array = MarkerArray()
         
         # Delete previous markers
         delete_marker = Marker()
         delete_marker.header.stamp = rospy.Time.now()
-        delete_marker.header.frame_id = detector.latest_frame_id
+        delete_marker.header.frame_id = workstation_frame_id
         delete_marker.action = Marker.DELETEALL
         marker_array.markers.append(delete_marker)
         
-        # Add workstation markers (green)
-        for i, line in enumerate(lines):
+        # Add markers for each goal pose
+        for i, pose in enumerate(workstation_goal_poses):
+            # Add arrow marker for pose
             marker = Marker()
-            marker.header.frame_id = detector.latest_frame_id
+            marker.header.frame_id = workstation_frame_id
             marker.header.stamp = rospy.Time.now()
-            marker.ns = "workstations"
+            marker.ns = "goal_poses"
             marker.id = i
-            marker.type = Marker.LINE_STRIP
+            marker.type = Marker.ARROW
             marker.action = Marker.ADD
-            marker.scale.x = 0.06  # Line width
+            marker.scale.x = 0.3  # Arrow length
+            marker.scale.y = 0.05  # Arrow width
+            marker.scale.z = 0.05  # Arrow height
             marker.color.r = 0.0
             marker.color.g = 1.0  # Green
-            marker.color.b = 0.0
+            marker.color.b = 0.5
             marker.color.a = 1.0
             
-            start_point = Point()
-            start_point.x = line['start'][0]
-            start_point.y = line['start'][1]
-            start_point.z = 0.0
-            
-            end_point = Point()
-            end_point.x = line['end'][0]
-            end_point.y = line['end'][1]
-            end_point.z = 0.0
-            
-            marker.points.append(start_point)
-            marker.points.append(end_point)
+            marker.pose = pose
             marker_array.markers.append(marker)
-        
-        # Add wall markers (red)
-        for i, line in enumerate([l for l in all_lines if l not in lines]):
-            marker = Marker()
-            marker.header.frame_id = detector.latest_frame_id
-            marker.header.stamp = rospy.Time.now()
-            marker.ns = "walls"
-            marker.id = i + len(lines)  # Start IDs after workstations
-            marker.type = Marker.LINE_STRIP
-            marker.action = Marker.ADD
-            marker.scale.x = 0.04  # Line width
-            marker.color.r = 1.0  # Red
-            marker.color.g = 0.0
-            marker.color.b = 0.0
-            marker.color.a = 0.6  # Semi-transparent
             
-            start_point = Point()
-            start_point.x = line['start'][0]
-            start_point.y = line['start'][1]
-            start_point.z = 0.0
+            # Add text marker with index number
+            text_marker = Marker()
+            text_marker.header.frame_id = workstation_frame_id
+            text_marker.header.stamp = rospy.Time.now()
+            text_marker.ns = "goal_numbers"
+            text_marker.id = i
+            text_marker.type = Marker.TEXT_VIEW_FACING
+            text_marker.action = Marker.ADD
+            text_marker.scale.z = 0.2  # Text size
+            text_marker.color.r = 1.0
+            text_marker.color.g = 1.0
+            text_marker.color.b = 1.0
+            text_marker.color.a = 1.0
+            text_marker.pose = pose
+            text_marker.pose.position.z += 0.2  # Position text above the arrow
+            text_marker.text = str(i)
+            marker_array.markers.append(text_marker)
             
-            end_point = Point()
-            end_point.x = line['end'][0]
-            end_point.y = line['end'][1]
-            end_point.z = 0.0
-            
-            marker.points.append(start_point)
-            marker.points.append(end_point)
-            marker_array.markers.append(marker)
-        
         # Publish markers
         marker_pub.publish(marker_array)
-        rospy.loginfo(f"Published visualization of {len(lines)} workstations and {len(all_lines) - len(lines)} walls")
+        rospy.loginfo(f"Published visualization of {len(workstation_goal_poses)} goal poses")
     except Exception as e:
         rospy.logwarn(f"Error publishing visualization markers: {str(e)}")
-    
-    if not lines:
-        rospy.logwarn("No suitable workstation lines found after filtering. Using all detected lines.")
-        lines = all_lines
         
-    rospy.loginfo(f"Found {len(lines)} workstation lines to visit")
+    rospy.loginfo(f"Found {len(workstation_goal_poses)} workstation goal poses to visit")
     
-    # Get midpoints of all lines for TSP calculation
-    midpoints = get_line_midpoints(lines)
+    # Get positions of all goal poses for TSP calculation
+    goal_positions = get_pose_positions(workstation_goal_poses)
     
     # Add robot's current position (0,0) as the starting point for TSP
     current_pos = (0.0, 0.0)  # Robot is at origin in its own frame
-    cities = [current_pos] + midpoints
+    cities = [current_pos] + goal_positions
     
     # Initialize TSP solver
     rospy.loginfo("Running TSP solver to find optimal path...")
@@ -254,19 +205,19 @@ def main():
     
     rospy.loginfo(f"TSP solver found optimal route with total distance: {distance:.2f}m")
     
-    # Simplified approach: directly use the ordered lines from TSP solution
+    # Simplified approach: directly use the ordered poses from TSP solution
     visit_order = []
     for point in route:
-        # Find which line this TSP point corresponds to
+        # Find which pose this TSP point corresponds to
         closest_idx = -1
         closest_dist = float('inf')
         
-        # Find the closest line midpoint to this TSP coordinate
-        for i, line in enumerate(lines):
-            mid_x = (line['start'][0] + line['end'][0]) / 2
-            mid_y = (line['start'][1] + line['end'][1]) / 2
+        # Find the closest pose to this TSP coordinate
+        for i, pose in enumerate(workstation_goal_poses):
+            pose_x = pose.position.x
+            pose_y = pose.position.y
             
-            dist = math.sqrt((point[0] - mid_x)**2 + (point[1] - mid_y)**2)
+            dist = math.sqrt((point[0] - pose_x)**2 + (point[1] - pose_y)**2)
             
             if dist < closest_dist:
                 closest_dist = dist
@@ -281,42 +232,50 @@ def main():
         if idx not in ordered_indices:
             ordered_indices.append(idx)
     
-    # Make sure we have a clean publisher for velocity commands
+    # Make sure we have a clean publisher for velocity commands and goals
     cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
-    rospy.sleep(1.0)  # Wait for publisher to connect
+    goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
+    rospy.sleep(1.0)  # Wait for publishers to connect
     
     # Log the navigation plan
-    rospy.loginfo(f"Starting navigation to {len(ordered_indices)} lines in optimal order...")
-    for i, line_idx in enumerate(ordered_indices):
-        line = lines[line_idx]
-        rospy.loginfo(f"  Line {i+1}: length={line['length']:.2f}m, " +
-                     f"midpoint=({(line['start'][0]+line['end'][0])/2:.2f}, " +
-                     f"{(line['start'][1]+line['end'][1])/2:.2f})")
+    rospy.loginfo(f"Starting navigation to {len(ordered_indices)} workstations in optimal order...")
+    for i, pose_idx in enumerate(ordered_indices):
+        pose = workstation_goal_poses[pose_idx]
+        rospy.loginfo(f"  Workstation {i+1}: position=({pose.position.x:.2f}, {pose.position.y:.2f})")
     
-    # Navigate to each line in order
-    for i, line_idx in enumerate(ordered_indices):
-        rospy.loginfo(f"Navigating to line {i+1}/{len(ordered_indices)}")
+    # Navigate to each pose in order
+    for i, pose_idx in enumerate(ordered_indices):
+        rospy.loginfo(f"Navigating to workstation {i+1}/{len(ordered_indices)}")
         
-        # Simply use the index directly - much simpler and more reliable
-        target_idx = line_idx
+        # Get the target pose
+        target_pose = workstation_goal_poses[pose_idx]
         
-        # Now we navigate to the target line directly - no complex matching needed
-        rospy.loginfo(f"Navigating to line {target_idx} ({i+1}/{len(ordered_indices)})")
+        # Create a PoseStamped message for visualization
+        goal_msg = PoseStamped()
+        goal_msg.header.stamp = rospy.Time.now()
+        goal_msg.header.frame_id = workstation_frame_id
+        goal_msg.pose = target_pose
         
-        # Navigate to the line using direct velocity commands with more debug output
+        # Publish the goal for visualization
+        rospy.loginfo(f"Navigating to workstation {pose_idx} ({i+1}/{len(ordered_indices)})")
+        goal_pub.publish(goal_msg)
+        
+        # Use direct velocity commands for navigation
         try:
-            rospy.loginfo(f"Attempting to navigate to line {target_idx}...")
-            success = navigate_to_line_with_cmd_vel(detector, target_idx)
+            rospy.loginfo(f"Using direct velocity commands to navigate to workstation {pose_idx}...")
+            success = navigate_to_pose_with_cmd_vel(target_pose, workstation_frame_id)
             
             if success:
-                rospy.loginfo(f"Successfully navigated to line {target_idx}")
+                rospy.loginfo(f"Successfully navigated to workstation {pose_idx}")
             else:
-                rospy.logerr(f"Failed to navigate to line {target_idx}")
+                rospy.logerr(f"Failed to navigate to workstation {pose_idx}")
         except Exception as e:
             rospy.logerr(f"Error during navigation: {str(e)}")
-            # Send a stop command
-            stop_cmd = Twist()
-            cmd_vel_pub.publish(stop_cmd)
+            # Just continue to the next goal
+        
+        # Send a stop command to ensure robot is stopped
+        stop_cmd = Twist()
+        cmd_vel_pub.publish(stop_cmd)
             
         # Send an explicit stop command
         stop_cmd = Twist()

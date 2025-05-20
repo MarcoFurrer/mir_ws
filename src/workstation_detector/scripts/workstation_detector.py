@@ -5,7 +5,7 @@ import numpy as np
 import math
 from sensor_msgs.msg import LaserScan
 from visualization_msgs.msg import Marker, MarkerArray
-from geometry_msgs.msg import Point, PoseStamped
+from geometry_msgs.msg import Point, PoseStamped, PoseArray, Pose
 from std_srvs.srv import Trigger, TriggerResponse
 from std_msgs.msg import Int32
 from tf.transformations import quaternion_from_euler
@@ -24,8 +24,11 @@ class WorkstationDetector:
         # Add marker publisher for RViz visualization
         self.marker_pub = rospy.Publisher('detected_lines', MarkerArray, queue_size=10)
         
-        # Add navigation publisher
+        # Add navigation publishers
         self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
+        
+        # New publisher for all workstation goal poses
+        self.workstation_poses_pub = rospy.Publisher('workstation_goal_poses', PoseArray, queue_size=1)
         
         # Add service for navigation
         self.navigate_srv = rospy.Service('navigate_to_line', Trigger, self.handle_navigate_service)
@@ -43,10 +46,16 @@ class WorkstationDetector:
         # Store detected workstations
         self.workstations = []
         
-        # Store latest detected lines and selected line
+        # Store latest detected lines, goal poses and selected line
         self.latest_lines = []
         self.latest_frame_id = None
         self.selected_line_index = 0
+        self.latest_goal_poses = PoseArray()
+        
+        # Parameters for workstation detection
+        self.min_line_length = rospy.get_param('~min_line_length', 0.4)
+        self.max_line_length = rospy.get_param('~max_line_length', 1.5)
+        self.distance_from_line = rospy.get_param('~distance_from_line', 0.7)
         
         # Create publisher for selected line visualization
         self.selected_line_pub = rospy.Publisher('selected_line', MarkerArray, queue_size=1)
@@ -84,9 +93,25 @@ class WorkstationDetector:
                          min_dist, max_dist, avg_dist)
             
             # Detect lines using Hough transform
-            lines = self.detect_lines_hough(points, frame_id=msg.header.frame_id)
-            if lines:
-                rospy.loginfo(f"Detected {len(lines)} lines in the scan")
+            all_lines = self.detect_lines_hough(points, frame_id=msg.header.frame_id)
+            if all_lines:
+                rospy.loginfo(f"Detected {len(all_lines)} lines in the scan")
+                
+                # Filter lines to find workstations
+                workstation_lines = self.filter_workstation_lines(all_lines)
+                
+                if workstation_lines:
+                    # Calculate and publish goal poses for workstations
+                    goal_poses = self.calculate_goal_poses(workstation_lines)
+                    self.publish_goal_poses(goal_poses)
+                    
+                    # Update the latest lines
+                    self.latest_lines = workstation_lines
+                    self.latest_frame_id = msg.header.frame_id
+                else:
+                    rospy.logwarn("No workstation lines detected after filtering")
+            else:
+                rospy.logwarn("No lines detected in this scan")
 
     def detect_lines_hough(self, points, rho=0.05, theta=np.pi/180, 
                        threshold=10, min_line_length=0.3, max_line_gap=0.2, frame_id='base_link'):
@@ -453,6 +478,117 @@ class WorkstationDetector:
         
         # Publish to the selected line topic
         self.selected_line_pub.publish(marker_array)
+    
+    def filter_workstation_lines(self, lines, min_length=None, max_length=None):
+        """
+        Filter out lines that are likely walls based on length and angle
+        
+        Args:
+            lines: List of detected lines
+            min_length: Minimum line length to consider (default: from params)
+            max_length: Maximum line length to consider (default: from params)
+            
+        Returns:
+            List of lines that are likely workstations (not walls)
+        """
+        # Use class parameters if not specified
+        if min_length is None:
+            min_length = self.min_line_length
+        if max_length is None:
+            max_length = self.max_line_length
+            
+        filtered_lines = []
+        for line in lines:
+            # Filter based on length
+            if min_length <= line['length'] <= max_length:
+                # Additional filtering based on angle - avoid lines too close to cardinal directions
+                angle = line['angle'] % 180
+                angle_tolerance = 5
+                # Skip lines that are aligned with walls (approximately 0°, 90°, or 180°)
+                if (angle < angle_tolerance or
+                    abs(angle - 90) < angle_tolerance or
+                    abs(angle - 180) < angle_tolerance):
+                    rospy.loginfo(f"Skipping potential wall with angle {angle:.1f}° and length {line['length']:.2f}m")
+                    continue
+                    
+                filtered_lines.append(line)
+                
+        rospy.loginfo(f"Filtered {len(lines)} lines to {len(filtered_lines)} potential workstations")
+        return filtered_lines
+    
+    def calculate_goal_poses(self, lines, distance_from_line=None):
+        """
+        Calculate goal poses for each workstation line
+        
+        Args:
+            lines: List of filtered workstation lines
+            distance_from_line: Distance to position the robot from the line (meters)
+            
+        Returns:
+            PoseArray containing goal poses for all workstations
+        """
+        if distance_from_line is None:
+            distance_from_line = self.distance_from_line
+            
+        pose_array = PoseArray()
+        pose_array.header.stamp = rospy.Time.now()
+        pose_array.header.frame_id = self.latest_frame_id
+        
+        for line in lines:
+            # Calculate midpoint of the line
+            line_start = np.array(line['start'])
+            line_end = np.array(line['end'])
+            line_midpoint = (line_start + line_end) / 2.0
+            
+            # Calculate line direction vector
+            line_direction = line_end - line_start
+            line_length = np.linalg.norm(line_direction)
+            
+            if line_length < 0.01:  # Avoid division by zero
+                continue
+                
+            # Normalize line direction
+            line_direction = line_direction / line_length
+            
+            # Calculate normal vector to the line (perpendicular)
+            # Rotate 90 degrees counter-clockwise
+            line_normal = np.array([-line_direction[1], line_direction[0]])
+            
+            # Position in front of the line
+            # We want the robot to face the line, so we place it along the normal vector
+            target_position = line_midpoint + line_normal * distance_from_line
+            
+            # Robot should face the line
+            target_orientation = math.atan2(-line_normal[1], -line_normal[0])
+            
+            # Create pose
+            pose = Pose()
+            pose.position.x = float(target_position[0])
+            pose.position.y = float(target_position[1])
+            pose.position.z = 0.0
+            
+            # Convert euler angle to quaternion
+            quaternion = quaternion_from_euler(0, 0, target_orientation)
+            pose.orientation.x = quaternion[0]
+            pose.orientation.y = quaternion[1]
+            pose.orientation.z = quaternion[2]
+            pose.orientation.w = quaternion[3]
+            
+            # Add to pose array
+            pose_array.poses.append(pose)
+            
+        return pose_array
+    
+    def publish_goal_poses(self, pose_array):
+        """
+        Publish goal poses for all detected workstations
+        
+        Args:
+            pose_array: PoseArray of workstation goal poses
+        """
+        self.latest_goal_poses = pose_array
+        self.workstation_poses_pub.publish(pose_array)
+        rospy.loginfo(f"Published {len(pose_array.poses)} workstation goal poses")
 
 
 if __name__ == '__main__':
