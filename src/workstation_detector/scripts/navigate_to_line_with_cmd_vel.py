@@ -25,6 +25,7 @@ def navigate_to_line_with_cmd_vel(detector, line_index=0, distance_from_line=0.4
     Returns:
         True if navigation command was executed successfully
     """
+    rospy.loginfo("Starting navigation to line...")
     # Check if line exists
     if line_index >= len(detector.latest_lines):
         rospy.logwarn(f"Line index {line_index} is out of range")
