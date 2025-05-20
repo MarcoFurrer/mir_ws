@@ -47,7 +47,7 @@ class WorkstationDetector:
         self.latest_goal_poses = PoseArray()
         
         # Parameters for workstation detection
-        self.min_line_length = rospy.get_param('~min_line_length', 0.4)
+        self.min_line_length = rospy.get_param('~min_line_length', 0.3)
         self.max_line_length = rospy.get_param('~max_line_length', 1.5)
         self.distance_from_line = rospy.get_param('~distance_from_line', 0.7)
         
@@ -379,7 +379,7 @@ class WorkstationDetector:
     
     def filter_workstation_lines(self, lines, min_length=None, max_length=None):
         """
-        Filter out lines that are likely walls based on length and angle
+        Filter out lines that are likely walls based on length
         
         Args:
             lines: List of detected lines
@@ -387,7 +387,7 @@ class WorkstationDetector:
             max_length: Maximum line length to consider (default: from params)
             
         Returns:
-            List of lines that are likely workstations (not walls)
+            List of lines that are likely workstations
         """
         # Use class parameters if not specified
         if min_length is None:
@@ -397,18 +397,8 @@ class WorkstationDetector:
             
         filtered_lines = []
         for line in lines:
-            # Filter based on length
+            # Filter based on length only
             if min_length <= line['length'] <= max_length:
-                # Additional filtering based on angle - avoid lines too close to cardinal directions
-                angle = line['angle'] % 180
-                angle_tolerance = 5
-                # Skip lines that are aligned with walls (approximately 0°, 90°, or 180°)
-                if (angle < angle_tolerance or
-                    abs(angle - 90) < angle_tolerance or
-                    abs(angle - 180) < angle_tolerance):
-                    rospy.loginfo(f"Skipping potential wall with angle {angle:.1f}° and length {line['length']:.2f}m")
-                    continue
-                    
                 filtered_lines.append(line)
                 
         rospy.loginfo(f"Filtered {len(lines)} lines to {len(filtered_lines)} potential workstations")
