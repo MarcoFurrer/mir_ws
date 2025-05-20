@@ -199,7 +199,6 @@ class WorkstationDetector:
                 }
                 
                 detected_lines.append(detected_line)
-                print(f"Line detected: length={length:.2f}m, angle={angle:.1f}°")
             
             # Store the latest detected lines for navigation
             self.latest_lines = detected_lines
@@ -302,7 +301,6 @@ class WorkstationDetector:
             
         # Publish the marker array
         self.marker_pub.publish(marker_array)
-        print(f"Published {len(lines)} line markers to RViz")
 
     def process_laser_scan(self, msg):
         """
