@@ -86,6 +86,42 @@ def main():
     rospy.loginfo("Starting WorkstationDetector...")
     detector = WorkstationDetector()
     
+    # Test basic movement to ensure velocity commands work
+    rospy.loginfo("Testing basic robot movement...")
+    test_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
+    rospy.sleep(1.0)  # Wait for publisher connections
+    
+    # Simple forward test
+    forward_cmd = Twist()
+    forward_cmd.linear.x = 0.1  # Slow forward
+    
+    rospy.loginfo("Testing forward movement for 1 second...")
+    start_time = time.time()
+    while time.time() - start_time < 1.0 and not rospy.is_shutdown():
+        test_pub.publish(forward_cmd)
+        rospy.sleep(0.1)
+    
+    # Stop
+    test_pub.publish(Twist())
+    rospy.sleep(1.0)
+    
+    # Simple rotation test
+    turn_cmd = Twist()
+    turn_cmd.angular.z = 0.3  # Slow rotation
+    
+    rospy.loginfo("Testing rotation for 1 second...")
+    start_time = time.time()
+    while time.time() - start_time < 1.0 and not rospy.is_shutdown():
+        test_pub.publish(turn_cmd)
+        rospy.sleep(0.1)
+    
+    # Stop again
+    test_pub.publish(Twist())
+    rospy.sleep(1.0)
+    
+    # Continue with regular execution
+    rospy.loginfo("Basic movement test complete. Starting line detection...")
+    
     # Wait for lines to be detected
     wait_count = 0
     
@@ -218,70 +254,64 @@ def main():
     
     rospy.loginfo(f"TSP solver found optimal route with total distance: {distance:.2f}m")
     
-    # Create mapping between TSP cities and lines
-    line_indices = []
+    # Simplified approach: directly use the ordered lines from TSP solution
+    visit_order = []
     for point in route:
-        # Find the closest line midpoint to this TSP point
-        best_idx = -1
-        best_dist = float('inf')
+        # Find which line this TSP point corresponds to
+        closest_idx = -1
+        closest_dist = float('inf')
         
+        # Find the closest line midpoint to this TSP coordinate
         for i, line in enumerate(lines):
             mid_x = (line['start'][0] + line['end'][0]) / 2
             mid_y = (line['start'][1] + line['end'][1]) / 2
             
             dist = math.sqrt((point[0] - mid_x)**2 + (point[1] - mid_y)**2)
             
-            if dist < best_dist:
-                best_dist = dist
-                best_idx = i
-                
-        if best_idx >= 0:
-            line_indices.append(best_idx)
+            if dist < closest_dist:
+                closest_dist = dist
+                closest_idx = i
+        
+        if closest_idx >= 0 and closest_dist < 1.0:  # Only add if it's reasonably close
+            visit_order.append(closest_idx)
     
-    # Remove duplicates while preserving order
-    unique_indices = []
-    [unique_indices.append(idx) for idx in line_indices if idx not in unique_indices]
-    
-    # Visit each line in the optimal order
-    rospy.loginfo(f"Starting navigation to {len(unique_indices)} lines in optimal order...")
+    # Remove duplicates but preserve order
+    ordered_indices = []
+    for idx in visit_order:
+        if idx not in ordered_indices:
+            ordered_indices.append(idx)
     
     # Make sure we have a clean publisher for velocity commands
     cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
     rospy.sleep(1.0)  # Wait for publisher to connect
     
-    for i, line_idx in enumerate(unique_indices):
-        # Get updated detector data
-        detector_line_idx = -1
+    # Log the navigation plan
+    rospy.loginfo(f"Starting navigation to {len(ordered_indices)} lines in optimal order...")
+    for i, line_idx in enumerate(ordered_indices):
+        line = lines[line_idx]
+        rospy.loginfo(f"  Line {i+1}: length={line['length']:.2f}m, " +
+                     f"midpoint=({(line['start'][0]+line['end'][0])/2:.2f}, " +
+                     f"{(line['start'][1]+line['end'][1])/2:.2f})")
+    
+    # Navigate to each line in order
+    for i, line_idx in enumerate(ordered_indices):
+        rospy.loginfo(f"Navigating to line {i+1}/{len(ordered_indices)}")
         
-        # Find matching line in current detector data
-        for j, current_line in enumerate(detector.latest_lines):
-            if j >= len(lines):
-                continue
-                
-            if abs(current_line['length'] - lines[line_idx]['length']) < 0.1:
-                # Similar length lines
-                detector_line_idx = j
-                break
+        # Simply use the index directly - much simpler and more reliable
+        target_idx = line_idx
         
-        # If we can't find a matching line, use the original index if still valid
-        if detector_line_idx < 0 and line_idx < len(detector.latest_lines):
-            detector_line_idx = line_idx
-            
-        # Skip if no valid line found
-        if detector_line_idx < 0 or detector_line_idx >= len(detector.latest_lines):
-            rospy.logwarn(f"Cannot find line {line_idx} in current detector data, skipping")
-            continue
-            
-        rospy.loginfo(f"Navigating to line {detector_line_idx} ({i+1}/{len(unique_indices)})")
+        # Now we navigate to the target line directly - no complex matching needed
+        rospy.loginfo(f"Navigating to line {target_idx} ({i+1}/{len(ordered_indices)})")
         
         # Navigate to the line using direct velocity commands with more debug output
         try:
-            success = navigate_to_line_with_cmd_vel(detector, detector_line_idx)
+            rospy.loginfo(f"Attempting to navigate to line {target_idx}...")
+            success = navigate_to_line_with_cmd_vel(detector, target_idx)
             
             if success:
-                rospy.loginfo(f"Successfully navigated to line {detector_line_idx}")
+                rospy.loginfo(f"Successfully navigated to line {target_idx}")
             else:
-                rospy.logerr(f"Failed to navigate to line {detector_line_idx}")
+                rospy.logerr(f"Failed to navigate to line {target_idx}")
         except Exception as e:
             rospy.logerr(f"Error during navigation: {str(e)}")
             # Send a stop command
