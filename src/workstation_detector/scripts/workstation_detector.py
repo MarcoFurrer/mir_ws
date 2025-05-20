@@ -24,16 +24,10 @@ class WorkstationDetector:
         # Add marker publisher for RViz visualization
         self.marker_pub = rospy.Publisher('detected_lines', MarkerArray, queue_size=10)
         
-        # Add navigation publishers
-        self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
-        
-        # New publisher for all workstation goal poses
+        # Publisher for workstation goal poses
         self.workstation_poses_pub = rospy.Publisher('workstation_goal_poses', PoseArray, queue_size=1)
         
-        # Add service for navigation
-        self.navigate_srv = rospy.Service('navigate_to_line', Trigger, self.handle_navigate_service)
-        
-        # Add subscriber for line selection
+        # Add subscriber for line selection (only for visualization purposes)
         self.line_selection_sub = rospy.Subscriber('select_line', Int32, self.handle_line_selection)
         
         # TF buffer for coordinate transformations
@@ -80,8 +74,8 @@ class WorkstationDetector:
         # Process the laser scan to get points
         points = self.process_laser_scan(msg)
         
-        rospy.loginfo("\n--- Processing scan with %d valid points from %s ---", 
-                     len(points), msg.header.frame_id)
+        #rospy.loginfo("\n--- Processing scan with %d valid points from %s ---", 
+        #            len(points), msg.header.frame_id)
         
         # Basic scan statistics
         if points:
@@ -89,13 +83,12 @@ class WorkstationDetector:
             min_dist = min(distances)
             max_dist = max(distances)
             avg_dist = sum(distances) / len(distances)
-            rospy.loginfo("Scan statistics: min=%.2fm, max=%.2fm, avg=%.2fm",
-                         min_dist, max_dist, avg_dist)
+            #rospy.loginfo("Scan statistics: min=%.2fm, max=%.2fm, avg=%.2fm",
+            #             min_dist, max_dist, avg_dist)
             
             # Detect lines using Hough transform
             all_lines = self.detect_lines_hough(points, frame_id=msg.header.frame_id)
             if all_lines:
-                rospy.loginfo(f"Detected {len(all_lines)} lines in the scan")
                 
                 # Filter lines to find workstations
                 workstation_lines = self.filter_workstation_lines(all_lines)
@@ -117,7 +110,6 @@ class WorkstationDetector:
                        threshold=10, min_line_length=0.3, max_line_gap=0.2, frame_id='base_link'):
         """
         Detect lines in laser scan data using Hough Transform
-        
         Args:
             points: List of (x, y) points
             rho: Distance resolution of the accumulator in meters
@@ -172,7 +164,7 @@ class WorkstationDetector:
         detected_lines = []
         
         if lines is not None:
-            print(f"Hough Transform detected {len(lines)} line segments")
+            #print(f"Hough Transform detected {len(lines)} line segments")
             
             # Process each line
             for line in lines:
@@ -216,7 +208,6 @@ class WorkstationDetector:
     def publish_line_markers(self, lines, frame_id):
         """
         Publish detected lines as RViz markers
-        
         Args:
             lines: List of detected lines
             frame_id: Frame ID from the laser scan
@@ -306,7 +297,6 @@ class WorkstationDetector:
         """
         Process the laser scan message and return valid points
         """
-        print("Processing laser scan...")
         # Extract ranges and angles
         ranges = np.array(msg.ranges)
         angles = np.linspace(msg.angle_min, msg.angle_max, len(ranges))
@@ -327,7 +317,7 @@ class WorkstationDetector:
         return list(zip(x_points, y_points))
     
     def handle_line_selection(self, msg):
-        """Handle selection of line by index"""
+        """Handle selection of line by index (for visualization only)"""
         line_index = msg.data
         if not self.latest_lines:
             rospy.logwarn("No lines detected yet, cannot select line %d", line_index)
@@ -343,96 +333,6 @@ class WorkstationDetector:
         
         # Highlight the selected line
         self.highlight_selected_line()
-
-    def handle_navigate_service(self, req):
-        """Handle service request to navigate to the currently selected line"""
-        success = self.navigate_to_line(self.selected_line_index)
-        response = TriggerResponse()
-        response.success = success
-        if success:
-            response.message = f"Navigating to line {self.selected_line_index}"
-        else:
-            response.message = "Navigation failed"
-        return response
-
-    def navigate_to_line(self, line_index=None, distance_from_line=0.7):
-        """
-        Navigate to a position in front of a detected line
-        
-        Args:
-            line_index: Index of the line to navigate to (default: use selected_line_index)
-            distance_from_line: How far from the line to position the robot (meters)
-        
-        Returns:
-            True if navigation command was sent successfully, False otherwise
-        """
-        if line_index is None:
-            line_index = self.selected_line_index
-            
-        # Check if we have lines detected
-        if not self.latest_lines:
-            rospy.logwarn("No lines detected yet, cannot navigate")
-            return False
-            
-        # Check if requested line exists
-        if line_index >= len(self.latest_lines):
-            rospy.logwarn(f"Line index {line_index} is out of range. Only {len(self.latest_lines)} lines detected.")
-            return False
-        
-        # Get the target line
-        target_line = self.latest_lines[line_index]
-        
-        # Calculate midpoint of the line
-        line_start = np.array(target_line['start'])
-        line_end = np.array(target_line['end'])
-        line_midpoint = (line_start + line_end) / 2.0
-        
-        # Calculate line direction vector
-        line_direction = line_end - line_start
-        line_length = np.linalg.norm(line_direction)
-        
-        if line_length < 0.01:  # Avoid division by zero
-            rospy.logwarn("Line is too short for navigation")
-            return False
-            
-        # Normalize line direction
-        line_direction = line_direction / line_length
-        
-        # Calculate normal vector to the line (perpendicular)
-        # Rotate 90 degrees counter-clockwise
-        line_normal = np.array([-line_direction[1], line_direction[0]])
-        
-        # Position in front of the line
-        # We want the robot to face the line, so we place it along the normal vector
-        target_position = line_midpoint + line_normal * distance_from_line
-        
-        # Robot should face the line
-        target_orientation = math.atan2(-line_normal[1], -line_normal[0])
-        
-        rospy.loginfo(f"Navigating to line {line_index}: position=[{target_position[0]:.2f}, {target_position[1]:.2f}], " +
-                     f"orientation={math.degrees(target_orientation):.1f}°")
-        
-        # Create goal directly in the laser frame
-        goal = PoseStamped()
-        goal.header.frame_id = self.latest_frame_id
-        goal.header.stamp = rospy.Time.now()
-        
-        goal.pose.position.x = float(target_position[0])
-        goal.pose.position.y = float(target_position[1])
-        goal.pose.position.z = 0.0
-        
-        # Convert euler angle to quaternion
-        quaternion = quaternion_from_euler(0, 0, target_orientation)
-        goal.pose.orientation.x = quaternion[0]
-        goal.pose.orientation.y = quaternion[1]
-        goal.pose.orientation.z = quaternion[2]
-        goal.pose.orientation.w = quaternion[3]
-        
-        # Publish the goal
-        self.goal_pub.publish(goal)
-        rospy.loginfo(f"Navigation goal published in {self.latest_frame_id} frame")
-        
-        return True
         
     def highlight_selected_line(self):
         """Publish a special marker for the currently selected line"""
