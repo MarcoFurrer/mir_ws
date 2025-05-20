@@ -593,6 +593,11 @@ class WorkstationDetector:
 
 if __name__ == '__main__':
     try:
+        # Initialize the node first
+        rospy.init_node('workstation_detector')
+        rospy.loginfo("Initializing workstation detector node...")
+        
+        # Create detector instance
         detector = WorkstationDetector()
         rospy.loginfo("Workstation detector running. Press Ctrl+C to stop.")
         rospy.spin()
