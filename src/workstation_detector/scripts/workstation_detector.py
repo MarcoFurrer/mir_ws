@@ -309,7 +309,6 @@ class WorkstationDetector:
         x_points = valid_ranges * np.cos(valid_angles)
         y_points = valid_ranges * np.sin(valid_angles)
         
-        print(f"Found {len(x_points)} valid points")
         return list(zip(x_points, y_points))
     
     def handle_line_selection(self, msg):

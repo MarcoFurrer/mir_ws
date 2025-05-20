@@ -207,7 +207,7 @@ def main():
     
     # Find the best route
     tsp_solver.find_best_route()
-    
+    rospy.loginfo("TSP solver completed")
     # Get optimal route
     route, distance = tsp_solver.get_best_route()
     
