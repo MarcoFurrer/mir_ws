@@ -18,21 +18,31 @@ sys.path.append(script_dir)
 from navigate_to_line_with_cmd_vel import navigate_to_pose_with_cmd_vel
 from tsp import TSP
 
-# Global variable to store received goal poses
+# Global variables to store received goal poses
 workstation_goal_poses = None
 workstation_frame_id = None
+first_poses_received = False  # Flag to track if we've already received the first set
 
 def workstation_poses_callback(msg):
     """
-    Callback for receiving workstation goal poses
+    Callback for receiving workstation goal poses - only stores the first set received
     
     Args:
         msg: PoseArray message containing goal poses for workstations
     """
-    global workstation_goal_poses, workstation_frame_id
-    workstation_goal_poses = msg.poses
-    workstation_frame_id = msg.header.frame_id
-    rospy.loginfo(f"Received {len(workstation_goal_poses)} workstation goal poses")
+    global workstation_goal_poses, workstation_frame_id, first_poses_received
+    
+    # Only accept the first set of poses we receive
+    if not first_poses_received and len(msg.poses) > 0:
+        workstation_goal_poses = msg.poses
+        workstation_frame_id = msg.header.frame_id
+        first_poses_received = True
+        rospy.loginfo(f"Received first set of {len(workstation_goal_poses)} goal poses - will ignore further updates")
+    elif not first_poses_received:
+        rospy.loginfo(f"Received empty pose array, waiting for poses...")
+    else:
+        # We've already received our poses, so we'll ignore this update
+        rospy.logdebug(f"Ignoring update with {len(msg.poses)} poses - using first set only")
 
 def get_pose_positions(poses):
     """
@@ -63,8 +73,9 @@ def main():
     rospy.loginfo(f"  - Minimum wait time: {min_wait_time}s")
     
     # Subscribe to workstation goal poses from WorkstationDetector
+    # We only care about the first valid set of poses we receive
     rospy.Subscriber('workstation_goal_poses', PoseArray, workstation_poses_callback)
-    rospy.loginfo("Waiting for workstation goal poses to be published...")
+    rospy.loginfo("Waiting for first set of workstation goal poses to be published...")
     
     # Test basic movement to ensure velocity commands work
     rospy.loginfo("Testing basic robot movement...")
@@ -297,7 +308,6 @@ def main():
     
     # Rotate for 2 seconds
     start_time = time.time()
-    rate = rospy.Rate(10)
     while time.time() - start_time < 2.0 and not rospy.is_shutdown():
         cmd_vel_pub.publish(spin_cmd)
         rate.sleep()
