@@ -211,6 +211,7 @@ def main():
     rospy.loginfo("TSP solver completed")
     # Get optimal route
     route, distance = tsp_solver.get_best_route()
+    rospy.loginfo(f"Optimal route: {route}")
     
     # Skip the first point in the route as it's the robot's current position
     route = route[1:]
