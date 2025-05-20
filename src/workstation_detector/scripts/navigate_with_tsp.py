@@ -202,7 +202,8 @@ def main():
     cities = [current_pos] + goal_positions
     
     # Initialize TSP solver
-    rospy.loginfo("Running TSP solver to find optimal path...")
+    rospy.loginfo(f"Running TSP solver to find optimal path...{cities} cities")
+    
     tsp_solver = TSP(cities)
     
     # Find the best route
