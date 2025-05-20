@@ -55,7 +55,6 @@ class WorkstationDetector:
         self.selected_line_pub = rospy.Publisher('selected_line', MarkerArray, queue_size=1)
         
         rospy.loginfo("Workstation detector initialized")
-        rospy.loginfo("Processing scans every %.1f seconds", self.processing_interval)
 
     def laser_callback(self, msg):
         """Process laser scan data at a controlled rate"""
@@ -67,9 +66,6 @@ class WorkstationDetector:
             return
             
         self.last_processed_time = current_time
-        
-        print(f"Processing scan message from topic: {msg._connection_header['topic']}")
-        print(f"Scan contains {len(msg.ranges)} points")
         
         # Process the laser scan to get points
         points = self.process_laser_scan(msg)
@@ -401,7 +397,7 @@ class WorkstationDetector:
             if min_length <= line['length'] <= max_length:
                 filtered_lines.append(line)
                 
-        rospy.loginfo(f"Filtered {len(lines)} lines to {len(filtered_lines)} potential workstations")
+        #rospy.loginfo(f"Filtered {len(lines)} lines to {len(filtered_lines)} potential workstations")
         return filtered_lines
     
     def calculate_goal_poses(self, lines, distance_from_line=None):
@@ -476,7 +472,7 @@ class WorkstationDetector:
         """
         self.latest_goal_poses = pose_array
         self.workstation_poses_pub.publish(pose_array)
-        rospy.loginfo(f"Published {len(pose_array.poses)} workstation goal poses")
+        #rospy.loginfo(f"Published {len(pose_array.poses)} workstation goal poses")
 
 
 if __name__ == '__main__':
