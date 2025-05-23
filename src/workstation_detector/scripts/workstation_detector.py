@@ -102,7 +102,8 @@ class WorkstationDetector:
                     self.latest_lines = workstation_lines
                     self.latest_frame_id = msg.header.frame_id
                 else:
-                    rospy.logwarn("No workstation lines detected after filtering")
+                    #rospy.logwarn("No workstation lines detected after filtering")
+                    pass
             else:
                 rospy.logwarn("No lines detected in this scan")
 
