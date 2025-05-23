@@ -30,7 +30,7 @@ class NavigationWithCmd:
         self.distance_tolerance = 0.15  # meters - more forgiving distance tolerance
         self.angle_tolerance = 0.08    # radians (≈4.6°) - slightly more forgiving angle tolerance
         self.rate = rospy.Rate(5)
-        
+        self.odom_initial_position = self.get_odom_data()
         
     def get_odom_data(self):
         """
@@ -78,7 +78,7 @@ class NavigationWithCmd:
 
     def navigate_to_pose(self, pose, frame_id='base_link', max_attempts=2):
         """
-        Navigate to a pose using a simple and robust approach
+        Navigate to a pose using odometry delta tracking approach
         
         Args:
             pose: geometry_msgs/Pose target pose in robot's frame
@@ -88,7 +88,7 @@ class NavigationWithCmd:
         Returns:
             True if navigation was successful
         """
-        rospy.loginfo("Starting simple navigation to pose...")
+        rospy.loginfo("Starting navigation to pose...")
         
         # Extract target information
         target_x = pose.position.x
@@ -101,30 +101,18 @@ class NavigationWithCmd:
         
         rospy.loginfo(f"Target: position=({target_x:.2f}, {target_y:.2f}), orientation={math.degrees(target_yaw):.1f}°")
         
-        # Get initial position
-        initial_x, initial_y, initial_yaw = self.get_odom_data()
-        if initial_x is None:
-            rospy.logerr("Failed to get odometry data. Navigation aborted.")
-            return False
-            
-        rospy.loginfo(f"Initial position: ({initial_x:.2f}, {initial_y:.2f}), orientation={math.degrees(initial_yaw):.1f}°")
-        
-        # Transform target from robot's local frame to odometry frame
-        rotated_x = target_x * math.cos(initial_yaw) - target_y * math.sin(initial_yaw)
-        rotated_y = target_x * math.sin(initial_yaw) + target_y * math.cos(initial_yaw)
-        
-        # Expected final position in odometry frame
-        expected_x = initial_x + rotated_x
-        expected_y = initial_y + rotated_y
-        expected_yaw = self.normalize_angle(initial_yaw + target_yaw)
-        
-        rospy.loginfo(f"Expected final position: ({expected_x:.2f}, {expected_y:.2f}), orientation={math.degrees(expected_yaw):.1f}°")
-        
-        # Simple navigation approach: rotate, move straight, rotate to final orientation
         for attempt in range(1, max_attempts + 1):
             if attempt > 1:
                 rospy.loginfo(f"Starting correction attempt {attempt}/{max_attempts}")
+        
+            # Get reference position at the start of this attempt
+            ref_x, ref_y, ref_yaw = self.get_odom_data()
+            if ref_x is None:
+                rospy.logerr("Failed to get odometry data. Navigation aborted.")
+                return False
                 
+            rospy.loginfo(f"Reference position: ({ref_x:.2f}, {ref_y:.2f}), orientation={math.degrees(ref_yaw):.1f}°")
+            
             # 1. Rotate to face target
             angle_to_target = math.atan2(target_y, target_x)
             self._rotate_to_angle(angle_to_target)
@@ -136,34 +124,39 @@ class NavigationWithCmd:
             # 3. Rotate to final orientation
             self._rotate_to_angle(target_yaw)
             
-            # Check if we reached the target
-            actual_x, actual_y, actual_yaw = self.get_odom_data()
-            if actual_x is None:
+            # Check how far we've moved from reference point
+            current_x, current_y, current_yaw = self.get_odom_data()
+            if current_x is None:
                 rospy.logwarn("Failed to get position after navigation")
                 continue
                 
-            # Calculate error in odometry frame
-            error_x = expected_x - actual_x
-            error_y = expected_y - actual_y
+            # Calculate delta movement in odometry frame
+            delta_x = current_x - ref_x
+            delta_y = current_y - ref_y
+            
+            # Convert delta to robot's initial frame
+            # We need to rotate by -ref_yaw to convert from odom to robot's initial frame
+            rotated_delta_x = delta_x * math.cos(-ref_yaw) - delta_y * math.sin(-ref_yaw)
+            rotated_delta_y = delta_x * math.sin(-ref_yaw) + delta_y * math.cos(-ref_yaw)
+            
+            # Calculate error between what we wanted and what we got
+            error_x = target_x - rotated_delta_x
+            error_y = target_y - rotated_delta_y
             error_distance = math.sqrt(error_x**2 + error_y**2)
             
+            rospy.loginfo(f"Movement delta: ({rotated_delta_x:.2f}, {rotated_delta_y:.2f})")
             rospy.loginfo(f"Position error: {error_distance:.2f}m")
             
             # If error is acceptable or this was the last attempt, we're done
             if error_distance <= self.distance_tolerance or attempt >= max_attempts:
                 break
                 
-            # Calculate correction in robot's local frame for next attempt
-            # Rotate the error vector by -current_yaw to get local coordinates
-            correction_x = error_x * math.cos(-actual_yaw) - error_y * math.sin(-actual_yaw)
-            correction_y = error_x * math.sin(-actual_yaw) + error_y * math.cos(-actual_yaw)
-            
             # Update target for next correction attempt
-            target_x = correction_x
-            target_y = correction_y
+            target_x = error_x
+            target_y = error_y
             
-            rospy.loginfo(f"Correction vector: ({correction_x:.2f}, {correction_y:.2f})")
-            
+            rospy.loginfo(f"Correction vector: ({error_x:.2f}, {error_y:.2f})")
+    
         rospy.loginfo("Navigation complete")
         return True
         
