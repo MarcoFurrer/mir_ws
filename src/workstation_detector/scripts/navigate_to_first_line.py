@@ -15,7 +15,7 @@ sys.path.append(script_dir)
 
 # Import the WorkstationDetector class
 from workstation_detector import WorkstationDetector
-from navigate_to_line_with_cmd_vel import navigate_to_line_with_cmd_vel
+from workstation_detector.scripts.navigation_with_cmd import navigate_to_line_with_cmd_vel
 
 def main():
     # Initialize ROS node

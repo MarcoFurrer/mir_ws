@@ -15,7 +15,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(script_dir)
 
 # Import the navigation helper and TSP solver
-from navigate_to_line_with_cmd_vel import navigate_to_pose_with_cmd_vel
+from workstation_detector.scripts.navigation_with_cmd import navigate_to_pose_with_cmd_vel
 from tsp import TSP
 
 # Global variables to store received goal poses
