@@ -258,7 +258,7 @@ def main():
         try:
             rospy.loginfo(f"Using navigation controller to navigate to workstation {pose_idx}...")
             # Use the improved navigation method with correction
-            success = nav_controller.navigate_to_pose_with_correction(target_pose, workstation_frame_id)
+            success = nav_controller.navigate_to_pose(target_pose, workstation_frame_id)
             
             if success:
                 rospy.loginfo(f"Successfully navigated to workstation {pose_idx}")
