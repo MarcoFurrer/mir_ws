@@ -1,4 +1,6 @@
 import rospy
+from ortools.constraint_solver import routing_enums_pb2
+from ortools.constraint_solver import pywrapcp
 
 class TSP:
     def __init__(self, cities):
@@ -20,8 +22,6 @@ class TSP:
     def find_best_route(self):
         """Use Google OR-Tools for efficient TSP solutions, with fallback to greedy approach"""
         try:
-            from ortools.constraint_solver import routing_enums_pb2
-            from ortools.constraint_solver import pywrapcp
             
             # Check if we have too few cities for OR-Tools to be necessary
             if self.num_cities <= 1:

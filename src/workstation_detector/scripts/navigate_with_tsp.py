@@ -14,8 +14,8 @@ from visualization_msgs.msg import Marker, MarkerArray
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(script_dir)
 
-# Import the navigation helper and TSP solver
-from workstation_detector.scripts.navigation_with_cmd import navigate_to_pose_with_cmd_vel
+# Import the navigation controller class and TSP solver
+from navigation_with_cmd import NavigationWithCmd
 from tsp import TSP
 
 # Global variables to store received goal poses
@@ -65,6 +65,9 @@ def main():
     rospy.init_node('navigate_with_tsp')
     rate = rospy.Rate(5)  # 5 Hz check rate
     
+    # Create our navigation controller
+    nav_controller = NavigationWithCmd()
+    
     # Get parameters from ROS parameter server with defaults
     max_wait_time = rospy.get_param('~wait_time', 15)
     min_wait_time = rospy.get_param('~min_wait_time', 5)
@@ -78,41 +81,26 @@ def main():
     rospy.Subscriber('workstation_goal_poses', PoseArray, workstation_poses_callback)
     rospy.loginfo("Waiting for first set of workstation goal poses to be published...")
     
-    # Test basic movement to ensure velocity commands work
-    rospy.loginfo("Testing basic robot movement...")
-    test_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
-    rospy.sleep(1.0)  # Wait for publisher connections
+    # Test the navigation controller
+    rospy.loginfo("Testing navigation controller...")
     
-    # Simple forward test
-    forward_cmd = Twist()
-    forward_cmd.linear.x = 0.1  # Slow forward
+    # Test odometry data reading
+    x, y, yaw = nav_controller.get_odom_data()
+    if x is not None and y is not None and yaw is not None:
+        rospy.loginfo(f"Odometry test successful. Current position: ({x:.2f}, {y:.2f}), orientation: {math.degrees(yaw):.1f}°")
+    else:
+        rospy.logwarn("Could not get odometry data. Navigation may be limited.")
     
-    rospy.loginfo("Testing forward movement for 1 second...")
-    start_time = time.time()
-    while time.time() - start_time < 1.0 and not rospy.is_shutdown():
-        test_pub.publish(forward_cmd)
-        rospy.sleep(0.1)
-    
-    # Stop
-    test_pub.publish(Twist())
+    # Test a simple rotation
+    rospy.loginfo("Testing rotation with navigation controller...")
+    nav_controller.rotate_in_place(math.radians(30))  # 30-degree rotation test
     rospy.sleep(1.0)
     
-    # Simple rotation test
-    turn_cmd = Twist()
-    turn_cmd.angular.z = 0.3  # Slow rotation
-    
-    rospy.loginfo("Testing rotation for 1 second...")
-    start_time = time.time()
-    while time.time() - start_time < 1.0 and not rospy.is_shutdown():
-        test_pub.publish(turn_cmd)
-        rospy.sleep(0.1)
-    
-    # Stop again
-    test_pub.publish(Twist())
-    rospy.sleep(1.0)
+    # Rotate back
+    nav_controller.rotate_in_place(math.radians(-30))
     
     # Continue with regular execution
-    rospy.loginfo("Basic movement test complete. Waiting for workstation poses...")
+    rospy.loginfo("Navigation controller test complete. Waiting for workstation poses...")
     
     # Wait for goal poses to be received
     wait_count = 0
@@ -274,10 +262,11 @@ def main():
         rospy.loginfo(f"Navigating to workstation {pose_idx} ({i+1}/{len(ordered_indices)})")
         goal_pub.publish(goal_msg)
         
-        # Use direct velocity commands for navigation
+        # Use the navigation controller to navigate to the pose
         try:
-            rospy.loginfo(f"Using direct velocity commands to navigate to workstation {pose_idx}...")
-            success = navigate_to_pose_with_cmd_vel(target_pose, workstation_frame_id)
+            rospy.loginfo(f"Using navigation controller to navigate to workstation {pose_idx}...")
+            # Use the improved navigation method with correction
+            success = nav_controller.navigate_to_pose_with_correction(target_pose, workstation_frame_id)
             
             if success:
                 rospy.loginfo(f"Successfully navigated to workstation {pose_idx}")
@@ -301,28 +290,16 @@ def main():
     # Finish with a celebratory spin
     rospy.loginfo("Completed visiting all lines in optimal order! Doing a final rotation...")
     
-    # Make one final rotation to show we're done
-    cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
-    rospy.sleep(0.5)
-    
-    # Create a slow rotation command
-    spin_cmd = Twist()
-    spin_cmd.angular.z = 0.5  # Rotate at moderate speed
-    
-    # Rotate for 2 seconds
-    start_time = time.time()
-    while time.time() - start_time < 2.0 and not rospy.is_shutdown():
-        cmd_vel_pub.publish(spin_cmd)
-        rate.sleep()
-        
-    # Stop spinning
-    stop_cmd = Twist()
-    cmd_vel_pub.publish(stop_cmd)
+    # Use the navigation controller to perform a full 360-degree spin
+    nav_controller.rotate_in_place(math.radians(360))
     
     rospy.loginfo("TSP navigation completed successfully!")
 
 
 if __name__ == '__main__':
+    # Define nav_controller at global scope so it can be accessed in exception handling
+    nav_controller = None
+    
     try:
         main()
     except rospy.ROSInterruptException:
@@ -333,6 +310,6 @@ if __name__ == '__main__':
         try:
             cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
             cmd_vel_pub.publish(Twist())
-        except:
-            pass
+        except Exception as stop_error:
+            rospy.logerr(f"Error stopping robot: {str(stop_error)}")
     
