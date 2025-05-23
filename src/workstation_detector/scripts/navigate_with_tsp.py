@@ -112,64 +112,6 @@ def main():
         rospy.logerr("No workstation goal poses received within the timeout period. Exiting.")
         return
     
-    # Publish visualization markers for goal poses
-    marker_pub = rospy.Publisher('tsp_goal_poses', MarkerArray, queue_size=10)
-    
-    # Create visualization of goal poses
-    try:
-        marker_array = MarkerArray()
-        
-        # Delete previous markers
-        delete_marker = Marker()
-        delete_marker.header.stamp = rospy.Time.now()
-        delete_marker.header.frame_id = workstation_frame_id
-        delete_marker.action = Marker.DELETEALL
-        marker_array.markers.append(delete_marker)
-        
-        # Add markers for each goal pose
-        for i, pose in enumerate(workstation_goal_poses):
-            # Add arrow marker for pose
-            marker = Marker()
-            marker.header.frame_id = workstation_frame_id
-            marker.header.stamp = rospy.Time.now()
-            marker.ns = "goal_poses"
-            marker.id = i
-            marker.type = Marker.ARROW
-            marker.action = Marker.ADD
-            marker.scale.x = 0.3  # Arrow length
-            marker.scale.y = 0.05  # Arrow width
-            marker.scale.z = 0.05  # Arrow height
-            marker.color.r = 0.0
-            marker.color.g = 1.0  # Green
-            marker.color.b = 0.5
-            marker.color.a = 1.0
-            
-            marker.pose = pose
-            marker_array.markers.append(marker)
-            
-            # Add text marker with index number
-            text_marker = Marker()
-            text_marker.header.frame_id = workstation_frame_id
-            text_marker.header.stamp = rospy.Time.now()
-            text_marker.ns = "goal_numbers"
-            text_marker.id = i
-            text_marker.type = Marker.TEXT_VIEW_FACING
-            text_marker.action = Marker.ADD
-            text_marker.scale.z = 0.2  # Text size
-            text_marker.color.r = 1.0
-            text_marker.color.g = 1.0
-            text_marker.color.b = 1.0
-            text_marker.color.a = 1.0
-            text_marker.pose = pose
-            text_marker.pose.position.z += 0.2  # Position text above the arrow
-            text_marker.text = str(i)
-            marker_array.markers.append(text_marker)
-            
-        # Publish markers
-        marker_pub.publish(marker_array)
-        rospy.loginfo(f"Published visualization of {len(workstation_goal_poses)} goal poses")
-    except Exception as e:
-        rospy.logwarn(f"Error publishing visualization markers: {str(e)}")
         
     rospy.loginfo(f"Found {len(workstation_goal_poses)} workstation goal poses to visit")
     
