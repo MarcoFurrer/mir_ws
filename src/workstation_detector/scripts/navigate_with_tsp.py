@@ -91,14 +91,6 @@ def main():
     else:
         rospy.logwarn("Could not get odometry data. Navigation may be limited.")
     
-    # Test a simple rotation
-    rospy.loginfo("Testing rotation with navigation controller...")
-    nav_controller.rotate_in_place(math.radians(30))  # 30-degree rotation test
-    rospy.sleep(1.0)
-    
-    # Rotate back
-    nav_controller.rotate_in_place(math.radians(-30))
-    
     # Continue with regular execution
     rospy.loginfo("Navigation controller test complete. Waiting for workstation poses...")
     
