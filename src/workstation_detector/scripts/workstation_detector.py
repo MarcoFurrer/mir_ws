@@ -48,7 +48,7 @@ class WorkstationDetector:
         
         # Parameters for workstation detection
         self.min_line_length = rospy.get_param('~min_line_length', 0.25)
-        self.max_line_length = rospy.get_param('~max_line_length', 1.15)
+        self.max_line_length = rospy.get_param('~max_line_length', 1.10)
         self.distance_from_line = rospy.get_param('~distance_from_line', 0.7)
         
         # Create publisher for selected line visualization
