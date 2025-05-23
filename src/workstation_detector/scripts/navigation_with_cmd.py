@@ -67,6 +67,13 @@ class NavigationWithCmd:
         while (odom_data['x'] is None or odom_data['y'] is None or odom_data['yaw'] is None) and rospy.Time.now() < timeout:
             self.rate.sleep()
         
+        # If we timed out, try once more with a longer timeout
+        if odom_data['x'] is None or odom_data['y'] is None or odom_data['yaw'] is None:
+            rospy.logwarn("Failed to get odometry data, retrying with longer timeout...")
+            timeout = rospy.Time.now() + rospy.Duration(5.0)
+            while (odom_data['x'] is None or odom_data['y'] is None or odom_data['yaw'] is None) and rospy.Time.now() < timeout:
+                self.rate.sleep()
+        
         # Unregister to avoid callback overhead
         odom_sub.unregister()
         
@@ -171,16 +178,19 @@ class NavigationWithCmd:
             # 3. Rotate to final orientation in the global frame
             # We need to adjust the target orientation based on the robot's current orientation
             curr_x, curr_y, curr_yaw = self.get_odom_data()
-            # Transform the target yaw from initial frame to global frame
-            initial_x, initial_y, initial_yaw = self.odom_initial_position
-            global_target_yaw = self.normalize_angle(target_yaw + initial_yaw)
-            
-            # Calculate the required rotation in the robot's current frame
-            rotation_needed = self.normalize_angle(global_target_yaw - curr_yaw)
-            success = self._rotate_to_angle(rotation_needed)
-            if not success:
-                rospy.logerr("Failed to rotate to final orientation. Navigation aborted.")
-                return False
+            if curr_x is None or curr_y is None or curr_yaw is None:
+                rospy.logerr("Failed to get current position for final orientation. Skipping final rotation.")
+            else:
+                # Transform the target yaw from initial frame to global frame
+                initial_x, initial_y, initial_yaw = self.odom_initial_position
+                global_target_yaw = self.normalize_angle(target_yaw + initial_yaw)
+                
+                # Calculate the required rotation in the robot's current frame
+                rotation_needed = self.normalize_angle(global_target_yaw - curr_yaw)
+                success = self._rotate_to_angle(rotation_needed)
+                if not success:
+                    rospy.logerr("Failed to rotate to final orientation. Navigation aborted.")
+                    return False
             
             # Check if we're close enough to the target
             robot_frame_x, robot_frame_y = self.transform_to_robot_frame(target_x, target_y)
@@ -204,21 +214,29 @@ class NavigationWithCmd:
         Rotate the robot to face a specific angle in the robot's local frame
         
         Args:
-            target_angle: Angle to rotate to in radians
+            target_angle: Angle to rotate to in radians (relative to current orientation)
             
         Returns:
             True if rotation was successful
         """
         # Normalize target angle to be between -π and π
         target_angle = self.normalize_angle(target_angle)
-        rospy.loginfo(f"Rotating to angle {math.degrees(target_angle):.1f}°")
+        rospy.loginfo(f"Rotating by angle {math.degrees(target_angle):.1f}°")
         
-        # Check if we're already within tolerance
-        _, _, current_yaw = self.get_odom_data()
-        if current_yaw is None:
+        # Get initial orientation
+        _, _, initial_yaw = self.get_odom_data()
+        if initial_yaw is None:
             rospy.logwarn("Failed to get orientation for rotation")
             return False
             
+        # Calculate target orientation in odometry frame
+        # Since target_angle is relative to current orientation, add it to the current orientation
+        target_yaw = self.normalize_angle(initial_yaw + target_angle)
+        
+        rospy.loginfo(f"Initial orientation: {math.degrees(initial_yaw):.1f}°, " +
+                      f"Target orientation: {math.degrees(target_yaw):.1f}°")
+        
+        # Check if we're already within tolerance
         if abs(target_angle) < self.angle_tolerance:
             rospy.loginfo(f"Already within angle tolerance ({math.degrees(abs(target_angle)):.1f}° < {math.degrees(self.angle_tolerance):.1f}°), skipping rotation")
             return True
@@ -226,14 +244,9 @@ class NavigationWithCmd:
         # Create twist command
         cmd = Twist()
         
-        # Set rotation direction based on shortest path
-        if target_angle > 0:
-            cmd.angular.z = self.angular_speed
-        else:
-            cmd.angular.z = -self.angular_speed
-            
         # Start rotation
         start_time = time.time()
+        last_log_time = start_time
         
         # Rotate until we reach the target angle
         while not rospy.is_shutdown():
@@ -248,18 +261,34 @@ class NavigationWithCmd:
                 self.rate.sleep()
                 continue
                 
-            # Calculate remaining angle - we're in robot's local frame, so we just need the target angle
-            # In local frame, current_yaw is always 0 (because it's relative to current orientation)
-            angle_remaining = self.normalize_angle(target_angle)
+            # Calculate remaining angle - difference between current and target in odometry frame
+            angle_remaining = self.normalize_angle(target_yaw - current_yaw)
             
             # Check if we've reached the target
             if abs(angle_remaining) < self.angle_tolerance:
-                rospy.loginfo(f"Reached target angle: error = {math.degrees(abs(angle_remaining)):.1f}°")
+                rospy.loginfo(f"Reached target orientation: current={math.degrees(current_yaw):.1f}°, " +
+                              f"target={math.degrees(target_yaw):.1f}°")
                 break
                 
-            # Check for timeout (30 seconds max)
-            if time.time() - start_time > 30.0:
-                rospy.logerr("Rotation timeout reached")
+            # Adaptive speed control - slow down as we approach target
+            speed = min(self.angular_speed, max(0.1, abs(angle_remaining) * 0.8))
+            
+            # Set rotation direction based on shortest path
+            if angle_remaining > 0:
+                cmd.angular.z = speed
+            else:
+                cmd.angular.z = -speed
+                
+            # Add progress reporting every 2 seconds
+            if time.time() - last_log_time > 2.0:
+                rospy.loginfo(f"Rotation progress: current={math.degrees(current_yaw):.1f}°, " +
+                              f"target={math.degrees(target_yaw):.1f}°, " +
+                              f"remaining={math.degrees(angle_remaining):.1f}°")
+                last_log_time = time.time()
+                
+            # Check for timeout (15 seconds max)
+            if time.time() - start_time > 15.0:
+                rospy.logerr(f"Rotation timeout reached. Current: {math.degrees(current_yaw):.1f}°, Target: {math.degrees(target_yaw):.1f}°")
                 return False
                 
             # Publish rotation command and sleep
@@ -272,27 +301,72 @@ class NavigationWithCmd:
         return True
             
     def _move_straight(self, distance):
-        """Move the robot straight forward by a specified distance"""
+        """Move the robot straight forward by a specified distance using time-based control with feedback"""
         if distance < 0.05:  # Too small to move
             return
             
         rospy.loginfo(f"Moving forward {distance:.2f}m")
         
+        # Get starting position for feedback
+        start_x, start_y, _ = self.get_odom_data()
+        if start_x is None:
+            rospy.logwarn("Could not get starting position, using time-based movement instead")
+            # Fall back to time-based movement
+            cmd = Twist()
+            cmd.linear.x = self.linear_speed
+            movement_time = distance / self.linear_speed
+            
+            # Move
+            start_time = time.time()
+            while time.time() - start_time < movement_time and not rospy.is_shutdown():
+                self.cmd_vel_pub.publish(cmd)
+                self.rate.sleep()
+                
+            # Stop
+            self.cmd_vel_pub.publish(Twist())
+            rospy.sleep(0.5)
+            return
+        
+        # Move with odometry feedback
         cmd = Twist()
         cmd.linear.x = self.linear_speed
         
-        # Calculate movement time
-        movement_time = distance / self.linear_speed
-        
         # Move
         start_time = time.time()
-        while time.time() - start_time < movement_time and not rospy.is_shutdown():
+        last_log_time = start_time
+        dist_moved = 0
+        
+        while dist_moved < distance and not rospy.is_shutdown():
+            # Get current position
+            curr_x, curr_y, _ = self.get_odom_data()
+            if curr_x is not None and curr_y is not None:
+                # Calculate distance moved
+                dx = curr_x - start_x
+                dy = curr_y - start_y
+                dist_moved = math.sqrt(dx*dx + dy*dy)
+                
+                # Log progress periodically
+                if time.time() - last_log_time > 2.0:
+                    rospy.loginfo(f"Movement progress: {dist_moved:.2f}m / {distance:.2f}m ({dist_moved/distance*100:.1f}%)")
+                    last_log_time = time.time()
+                    
+                # Adjust speed as we get closer (slow down)
+                remaining = distance - dist_moved
+                if remaining < 0.5:
+                    cmd.linear.x = max(0.05, self.linear_speed * (remaining / 0.5))
+            
+            # Check for timeout (allow 3x the expected time)
+            expected_time = distance / self.linear_speed
+            if time.time() - start_time > expected_time * 3 + 10:
+                rospy.logwarn(f"Movement timeout. Expected {expected_time:.1f}s, elapsed {time.time() - start_time:.1f}s")
+                break
+                
             self.cmd_vel_pub.publish(cmd)
             self.rate.sleep()
             
         # Stop
         self.cmd_vel_pub.publish(Twist())
-        rospy.sleep(0.5)  # Brief pause
+        rospy.sleep(0.5)
         
     def rotate_in_place(self, angle):
         """
