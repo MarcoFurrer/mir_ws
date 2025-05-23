@@ -37,6 +37,7 @@ def workstation_poses_callback(msg):
         workstation_goal_poses = msg.poses
         workstation_frame_id = msg.header.frame_id
         first_poses_received = True
+        rospy.loginfo(f"Received workstation goal poses in frame '{workstation_frame_id}'")
         rospy.loginfo(f"Received first set of {len(workstation_goal_poses)} goal poses - will ignore further updates")
     elif not first_poses_received:
         rospy.loginfo(f"Received empty pose array, waiting for poses...")
