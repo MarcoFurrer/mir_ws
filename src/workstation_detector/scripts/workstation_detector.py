@@ -93,6 +93,10 @@ class WorkstationDetector:
                     # Calculate and publish goal poses for workstations
                     goal_poses = self.calculate_goal_poses(workstation_lines)
                     self.publish_goal_poses(goal_poses)
+                    # Log detected workstation goals
+                    rospy.loginfo(f"Detected {len(goal_poses.poses)} workstation goals:")
+                    for i, pose in enumerate(goal_poses.poses):
+                        rospy.loginfo(f"  Goal {i}: x={pose.position.x:.2f}, y={pose.position.y:.2f}")
                     
                     # Update the latest lines
                     self.latest_lines = workstation_lines
