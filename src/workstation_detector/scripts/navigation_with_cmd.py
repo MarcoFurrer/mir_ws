@@ -29,14 +29,8 @@ class NavigationWithCmd:
         self.angular_speed = 0.25      # rad/s - slightly faster rotations
         self.distance_tolerance = 0.15  # meters - more forgiving distance tolerance
         self.angle_tolerance = 0.08    # radians (≈4.6°) - slightly more forgiving angle tolerance
+        self.rate = rospy.Rate(5)
         
-        
-        # Log the configuration
-        rospy.loginfo(f"Navigation controller initialized with parameters:")
-        rospy.loginfo(f"  - Linear speed: {self.linear_speed} m/s")
-        rospy.loginfo(f"  - Angular speed: {self.angular_speed} rad/s ({math.degrees(self.angular_speed):.1f}°/s)")
-        rospy.loginfo(f"  - Distance tolerance: {self.distance_tolerance} m")
-        rospy.loginfo(f"  - Angle tolerance: {self.angle_tolerance} rad ({math.degrees(self.angle_tolerance):.1f}°)")
         
     def get_odom_data(self):
         """
@@ -66,9 +60,8 @@ class NavigationWithCmd:
         
         # Wait for the data with timeout
         timeout = rospy.Time.now() + rospy.Duration(2.0)
-        rate = rospy.Rate(10)  # 10 Hz
         while (odom_data['x'] is None or odom_data['y'] is None or odom_data['yaw'] is None) and rospy.Time.now() < timeout:
-            rate.sleep()
+            self.rate.sleep()
         
         # Unregister to avoid callback overhead
         odom_sub.unregister()
@@ -123,10 +116,9 @@ class NavigationWithCmd:
             
             # Publish turn command for the calculated duration
             start_time = time.time()
-            rate = rospy.Rate(10)  # 10 Hz control loop
             while time.time() - start_time < turn_time and not rospy.is_shutdown():
                 self.cmd_vel_pub.publish(turn_cmd)
-                rate.sleep()
+                self.rate.sleep()
         else:
             # Calculate target yaw in global frame
             target_yaw = initial_yaw + angle_to_target
@@ -183,7 +175,7 @@ class NavigationWithCmd:
                 
                 # Send rotation command
                 self.cmd_vel_pub.publish(turn_cmd)
-                rate.sleep()
+                self.rate.sleep()
         
         # Stop turning
         stop_cmd = Twist()
@@ -208,7 +200,7 @@ class NavigationWithCmd:
             start_time = time.time()
             while time.time() - start_time < drive_time and not rospy.is_shutdown():
                 self.cmd_vel_pub.publish(forward_cmd)
-                rate.sleep()
+                self.rate.sleep()
         else:
             # Use odometry-based movement
             forward_cmd = Twist()
@@ -243,7 +235,7 @@ class NavigationWithCmd:
                 
                 # Send movement command
                 self.cmd_vel_pub.publish(forward_cmd)
-                rate.sleep()
+                self.rate.sleep()
                 
             rospy.loginfo(f"Movement completed - actual distance: {moved_distance:.2f}m / target: {drive_distance:.2f}m")
         
@@ -271,7 +263,7 @@ class NavigationWithCmd:
             start_time = time.time()
             while time.time() - start_time < turn_time and not rospy.is_shutdown():
                 self.cmd_vel_pub.publish(turn_cmd)
-                rate.sleep()
+                self.rate.sleep()
         else:
             # Calculate target yaw in global frame
             target_yaw = yaw  # The final orientation we want
@@ -327,7 +319,7 @@ class NavigationWithCmd:
                     # Send rotation command
                     self.cmd_vel_pub.publish(turn_cmd)
                 
-                rate.sleep()
+                self.rate.sleep()
         
         # Stop the robot
         self.cmd_vel_pub.publish(stop_cmd)
@@ -378,11 +370,16 @@ class NavigationWithCmd:
         
         rospy.loginfo(f"Initial position from odometry: ({initial_x:.2f}, {initial_y:.2f}), orientation={math.degrees(initial_yaw):.1f}°")
         
-        # Expected final position after movement
-        expected_x = initial_x + target_x
-        expected_y = initial_y + target_y
+        # Transform target from robot's local frame to odometry frame
+        # First rotate the target by the robot's orientation
+        rotated_x = target_x * math.cos(initial_yaw) - target_y * math.sin(initial_yaw)
+        rotated_y = target_x * math.sin(initial_yaw) + target_y * math.cos(initial_yaw)
         
-        # Expected final orientation (adding relative change to initial)
+        # Then add to current position to get expected position
+        expected_x = initial_x + rotated_x
+        expected_y = initial_y + rotated_y
+        
+        # Expected final orientation
         expected_yaw = initial_yaw + target_yaw
         while expected_yaw > math.pi:
             expected_yaw -= 2 * math.pi
@@ -492,10 +489,9 @@ class NavigationWithCmd:
                     
                     # Execute turn
                     start_time = time.time()
-                    rate = rospy.Rate(10)
                     while time.time() - start_time < turn_time and not rospy.is_shutdown():
                         self.cmd_vel_pub.publish(turn_cmd)
-                        rate.sleep()
+                        self.rate.sleep()
                     
                     # Stop rotation
                     self.cmd_vel_pub.publish(Twist())
@@ -528,10 +524,9 @@ class NavigationWithCmd:
         # Execute turn
         rospy.loginfo(f"Rotating for {turn_time:.1f}s at {math.degrees(turn_cmd.angular.z):.1f}°/s")
         start_time = time.time()
-        rate = rospy.Rate(10)
         while time.time() - start_time < turn_time and not rospy.is_shutdown():
             self.cmd_vel_pub.publish(turn_cmd)
-            rate.sleep()
+            self.rate.sleep()
         
         # Stop rotation
         self.cmd_vel_pub.publish(Twist())
