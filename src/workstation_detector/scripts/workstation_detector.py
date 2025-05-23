@@ -48,7 +48,7 @@ class WorkstationDetector:
         
         # Parameters for workstation detection
         self.min_line_length = rospy.get_param('~min_line_length', 0.25)
-        self.max_line_length = rospy.get_param('~max_line_length', 0.9)
+        self.max_line_length = rospy.get_param('~max_line_length', 1.15)
         self.distance_from_line = rospy.get_param('~distance_from_line', 0.7)
         
         # Create publisher for selected line visualization
@@ -108,7 +108,7 @@ class WorkstationDetector:
                 rospy.logwarn("No lines detected in this scan")
 
     def detect_lines_hough(self, points, rho=0.05, theta=np.pi/180, 
-                       threshold=10, min_line_length=0.25, max_line_gap=0.05, frame_id='base_link'):
+                       threshold=10, min_line_length=0.3, max_line_gap=0.08, frame_id='base_link'):
         """
         Detect lines in laser scan data using Hough Transform
         Args:
