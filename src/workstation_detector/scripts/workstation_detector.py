@@ -107,7 +107,7 @@ class WorkstationDetector:
                 rospy.logwarn("No lines detected in this scan")
 
     def detect_lines_hough(self, points, rho=0.05, theta=np.pi/180, 
-                       threshold=10, min_line_length=0.3, max_line_gap=0.2, frame_id='base_link'):
+                       threshold=10, min_line_length=0.3, max_line_gap=0.05, frame_id='base_link'):
         """
         Detect lines in laser scan data using Hough Transform
         Args:
